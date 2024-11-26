@@ -1,0 +1,23 @@
+# Node modules
+node_modules/
+
+# Build directory
+dist/
+
+# Environment variables
+.env
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Optional npm cache directory
+.npm
+
+# TypeScript
+*.tsbuildinfo

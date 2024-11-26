@@ -9,4 +9,7 @@ const supabase: SupabaseClient<Database> = createClient<Database>(
   config.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// Prevent modifications to the client after creation
+Object.freeze(supabase);
+
 export default supabase;

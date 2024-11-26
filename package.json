@@ -24,6 +24,7 @@
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
+    "node-cron": "^3.0.0",
     "plaid": "^30.0.0",
     "winston": "^3.17.0"
   },

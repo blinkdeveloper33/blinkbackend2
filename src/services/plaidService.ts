@@ -1,3 +1,5 @@
+// src/services/plaidService.ts
+
 import { Configuration, PlaidApi, PlaidEnvironments } from 'plaid';
 import config from '../config';
 

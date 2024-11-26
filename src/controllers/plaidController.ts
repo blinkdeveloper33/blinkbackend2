@@ -5,14 +5,16 @@ import {
   CountryCode,
   Transaction as PlaidTransaction,
   TransactionsSyncRequest,
-  TransactionsSyncResponse
+  TransactionsSyncResponse,
+  AccountsGetResponse,
 } from 'plaid';
 import { Request, Response, NextFunction } from 'express';
 import supabase from '../services/supabaseService';
 import plaidClient from '../services/plaidService';
 import logger from '../services/logger';
-import { Transaction } from '../types/types';
+import { Transaction, BankAccount } from '../types/types';
 import config from '../config';
+import crypto from 'crypto';
 
 /**
  * Generates a Sandbox public token using Plaid's /sandbox/public_token/create endpoint.
@@ -95,7 +97,7 @@ export const exchangePublicToken = async (req: Request, res: Response): Promise<
     const accounts = authResponse.data.accounts;
 
     // Prepare bank accounts data for upsert
-    const bankAccountsToInsert = accounts.map(account => ({
+    const bankAccountsToInsert = accounts.map((account) => ({
       user_id: userId,
       plaid_access_token: accessToken,
       plaid_item_id: itemId,
@@ -106,6 +108,9 @@ export const exchangePublicToken = async (req: Request, res: Response): Promise<
       account_mask: account.mask,
       cursor: null, // Initialize cursor as null
       created_at: new Date().toISOString(),
+      available_balance: account.balances.available,
+      current_balance: account.balances.current,
+      currency: account.balances.iso_currency_code,
     }));
 
     // Use upsert to handle duplicate account_id
@@ -122,7 +127,10 @@ export const exchangePublicToken = async (req: Request, res: Response): Promise<
       account_id: account.account_id, // Plaid's account_id
       name: account.account_name,
       type: account.account_type,
-      subtype: account.account_subtype
+      subtype: account.account_subtype,
+      available_balance: account.available_balance,
+      current_balance: account.current_balance,
+      currency: account.currency,
     }));
 
     res.json({ 
@@ -184,7 +192,7 @@ export const syncTransactionsForUser = async (userId: string): Promise<{ added: 
 
           const transactionsToUpsert: Partial<Transaction>[] = [...added, ...modified].map((txn: PlaidTransaction) => ({
             transaction_id: txn.transaction_id, // Ensure this is unique
-            bank_account_id: account.id,
+            bank_account_id: account.id, // Linking transaction to account
             account_id: txn.account_id, // Linking transaction to account
             amount: txn.amount,
             date: txn.date,
@@ -221,6 +229,9 @@ export const syncTransactionsForUser = async (userId: string): Promise<{ added: 
 
             totalRemoved += removed.length;
           }
+
+          // Fetch and store account balances after syncing transactions
+          await fetchAndStoreAccountBalances(userId);
 
           currentCursor = next_cursor;
           hasMore = has_more;
@@ -282,40 +293,122 @@ export const transactionsSyncHandler = async (
 };
 
 /**
- * Retrieves transactions with pagination and date filtering
+ * Helper function to retrieve and store account balances
+ */
+export const fetchAndStoreAccountBalances = async (userId: string): Promise<void> => {
+  try {
+    // Fetch bank accounts for the user
+    const { data: bankAccounts, error: bankError } = await supabase
+      .from('bank_accounts')
+      .select('*')
+      .eq('user_id', userId);
+
+    if (bankError) {
+      throw new Error('Error fetching bank accounts: ' + bankError.message);
+    }
+
+    if (!bankAccounts || bankAccounts.length === 0) {
+      throw new Error('No bank accounts found for user');
+    }
+
+    for (const account of bankAccounts) {
+      try {
+        // Fetch account balances from Plaid
+        const response = await plaidClient.accountsGet({
+          access_token: account.plaid_access_token,
+        });
+
+        const accounts: AccountsGetResponse['accounts'] = response.data.accounts;
+
+        // Find the corresponding account
+        const plaidAccount = accounts.find(acc => acc.account_id === account.account_id);
+        if (!plaidAccount) {
+          logger.warn(`Account ID ${account.account_id} not found in Plaid response.`);
+          continue;
+        }
+
+        const balanceData = {
+          available_balance: plaidAccount.balances.available,
+          current_balance: plaidAccount.balances.current,
+          currency: plaidAccount.balances.iso_currency_code,
+        };
+
+        // Update the bank_accounts table with balance data
+        const { error: updateError } = await supabase
+          .from('bank_accounts')
+          .update(balanceData)
+          .eq('id', account.id);
+
+        if (updateError) {
+          throw new Error(`Error updating balance for account ${account.id}: ${updateError.message}`);
+        }
+
+        logger.info(`Updated balance for account ${account.account_id}`);
+      } catch (balanceError: any) {
+        logger.error(`Failed to fetch/store balance for account ${account.account_id}: ${balanceError.message}`);
+        // Depending on requirements, decide whether to continue or halt
+      }
+    }
+  } catch (error: any) {
+    logger.error(`Error in fetchAndStoreAccountBalances: ${error.message}`, { stack: error.stack });
+    throw error;
+  }
+};
+
+/**
+ * Synchronizes account balances for a user (Express Handler)
+ */
+export const syncBalancesHandler = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  const { userId } = req.body;
+
+  try {
+    await fetchAndStoreAccountBalances(userId);
+    res.json({ success: true, message: 'Account balances synchronized successfully' });
+  } catch (error: any) {
+    logger.error('Balance Sync Error:', error.message);
+    res.status(500).json({ error: 'Failed to synchronize account balances', details: error.message });
+  }
+};
+
+/**
+ * Retrieves transactions for a user with pagination and date filtering
  */
 export const getTransactions = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId, bankAccountId, startDate, endDate, page = 1, limit = 50 } = req.body;
 
-    // Log the parameters for debugging
-    logger.info(`Fetching transactions for User ID: ${userId}, Bank Account ID: ${bankAccountId}, Date Range: ${startDate} to ${endDate}, Page: ${page}, Limit: ${limit}`);
+    // Validate parameters (assuming validation is already done via express-validator)
 
+    // Calculate offset for pagination
     const offset = (page - 1) * limit;
 
-    const { data: transactions, error, count } = await supabase
+    // Fetch transactions from Supabase
+    const { data: transactions, error } = await supabase
       .from('transactions')
-      .select('*', { count: 'exact' })
+      .select('*')
+      .eq('user_id', userId)
       .eq('bank_account_id', bankAccountId)
       .gte('date', startDate)
       .lte('date', endDate)
       .order('date', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (error) throw error;
+    if (error) {
+      throw new Error('Error fetching transactions: ' + error.message);
+    }
 
     res.json({
+      success: true,
+      page,
+      limit,
       transactions,
-      pagination: {
-        total: count,
-        page,
-        limit,
-        pages: Math.ceil((count || 0) / limit)
-      }
     });
   } catch (error: any) {
-    // Corrected error logging by concatenating the message
-    logger.error(`Error fetching transactions: ${error.message}`);
-    res.status(500).json({ error: 'Failed to fetch transactions' });
+    logger.error('Get Transactions Error:', error.message);
+    res.status(500).json({ error: 'Failed to retrieve transactions', details: error.message });
   }
 };

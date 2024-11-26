@@ -8,11 +8,15 @@ import {
   getTransactions,
   transactionsSyncHandler,
   generateSandboxPublicToken,
-  syncTransactionsForUser
+  syncTransactionsForUser,
+  syncBalancesHandler,
+  fetchAndStoreAccountBalances
 } from '../controllers/plaidController';
 import authMiddleware from '../middleware/authMiddleware';
 import logger from '../services/logger';
 import supabase from '../services/supabaseService';
+import crypto from 'crypto';
+import config from '../config';
 
 const router: Router = express.Router();
 
@@ -38,6 +42,19 @@ const validate = (validations: ValidationChain[]) => {
  */
 router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
   try {
+    const signature = req.headers['x-plaid-signature'] as string;
+    const payload = JSON.stringify(req.body);
+    const expectedSignature = crypto
+      .createHmac('sha256', config.PLAID_WEBHOOK_SECRET)
+      .update(payload)
+      .digest('hex');
+
+    if (signature !== expectedSignature) {
+      logger.warn('Invalid webhook signature');
+      res.status(400).json({ error: 'Invalid signature' });
+      return;
+    }
+
     const { webhook_type, webhook_code, item_id } = req.body;
 
     logger.info(`Received webhook: Type=${webhook_type}, Code=${webhook_code}, Item ID=${item_id}`);
@@ -62,6 +79,9 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
 
         try {
           const stats = await syncTransactionsForUser(userId);
+          // Also fetch and store balances
+          await fetchAndStoreAccountBalances(userId);
+
           logger.info(`Synchronization triggered for userId: ${userId}. Stats: Added=${stats.added}, Modified=${stats.modified}, Removed=${stats.removed}`);
           res.status(200).send('Webhook received and synchronization triggered');
         } catch (syncError: any) {
@@ -176,6 +196,19 @@ router.post(
       .withMessage('Webhook must be a valid URL'),
   ]),
   generateSandboxPublicToken
+);
+
+/**
+ * Sync balances endpoint
+ */
+router.post(
+  '/sync_balances',
+  validate([
+    body('userId')
+      .notEmpty()
+      .withMessage('User ID is required')
+  ]),
+  syncBalancesHandler
 );
 
 export default router;

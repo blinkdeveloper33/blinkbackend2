@@ -28,11 +28,12 @@ export interface BankAccount {
   account_type: string;
   account_subtype: string;
   account_mask: string;
+  available_balance?: number; // New field
+  current_balance?: number;   // New field
+  currency?: string;         // New field
   cursor?: string; // For transactions sync per account
   created_at?: string;
 }
-
-// src/types/types.ts
 
 /**
  * Transaction Interface
@@ -52,7 +53,6 @@ export interface Transaction {
   account_id: string;
   created_at: string;
 }
-
 
 /**
  * Database Interface for Supabase

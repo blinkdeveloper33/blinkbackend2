@@ -3,178 +3,283 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
-# Function to print messages with colors
-function echo_info {
-  echo -e "\033[1;34m$1\033[0m"
+# ===========================
+# Load Environment Variables
+# ===========================
+if [ -f .env ]; then
+    # Export variables from .env, ignoring empty lines and comments
+    export $(grep -v '^#' .env | xargs)
+else
+    echo ".env file not found! Please create a .env file with the necessary variables."
+    exit 1
+fi
+
+# ===========================
+# Configuration Variables
+# ===========================
+
+# API Base URL
+BASE_URL=${BASE_URL:-http://localhost:5000}
+
+# Test User Details
+# Generate a unique email by appending a timestamp
+UNIQUE_EMAIL="testuser+$(date +%s)@example.com"
+TEST_PASSWORD=${TEST_PASSWORD:-Password123}
+FIRST_NAME=${FIRST_NAME:-John}
+LAST_NAME=${LAST_NAME:-Doe}
+STATE=${STATE:-CA}
+ZIPCODE=${ZIPCODE:-90001}
+
+# Email Account Credentials for OTP Retrieval
+EMAIL_ADDRESS=${EMAIL_ADDRESS}
+EMAIL_PASSWORD=${EMAIL_PASSWORD}
+IMAP_SERVER=${IMAP_SERVER}
+IMAP_PORT=${IMAP_PORT:-993}
+
+# Sender email to filter OTP emails
+SENDER_EMAIL=${SENDER_EMAIL:-no-reply@yourdomain.com}
+
+# ===========================
+# Utility Functions
+# ===========================
+
+# Function to log responses
+log_response() {
+    local step="$1"
+    local response="$2"
+    echo "===== $step Response ====="
+    echo "$response" | jq .
+    echo "============================"
 }
 
-function echo_success {
-  echo -e "\033[1;32m$1\033[0m"
+# Check if jq is installed
+if ! command -v jq &> /dev/null
+then
+    echo "jq could not be found. Please install jq before running the script."
+    echo "For NixOS: nix-env -iA nixpkgs.jq"
+    exit 1
+fi
+
+# Check if curl is installed
+if ! command -v curl &> /dev/null
+then
+    echo "curl could not be found. Please install curl before running the script."
+    echo "For NixOS: nix-env -iA nixpkgs.curl"
+    exit 1
+fi
+
+# Check if openssl is installed
+if ! command -v openssl &> /dev/null
+then
+    echo "openssl could not be found. Please install openssl before running the script."
+    echo "For NixOS: nix-env -iA nixpkgs.openssl"
+    exit 1
+fi
+
+# Function to get the latest UID from the search results
+get_latest_uid() {
+    echo "$IMAP_RESPONSE" | grep -Eo 'UID [0-9]+' | awk '{print $2}' | sort -n | tail -n1
 }
 
-function echo_error {
-  echo -e "\033[1;31m$1\033[0m"
+# Function to register user
+register_user() {
+    echo "=== Step 1: Registering a New User ==="
+    
+    # Send registration request
+    REGISTER_RESPONSE=$(curl -s -X POST "$BASE_URL/api/users/register" \
+      -H "Content-Type: application/json" \
+      -d "{
+            \"email\": \"$UNIQUE_EMAIL\",
+            \"password\": \"$TEST_PASSWORD\",
+            \"first_name\": \"$FIRST_NAME\",
+            \"last_name\": \"$LAST_NAME\",
+            \"state\": \"$STATE\",
+            \"zipcode\": \"$ZIPCODE\"
+          }")
+    
+    log_response "Register User" "$REGISTER_RESPONSE"
+    
+    if echo "$REGISTER_RESPONSE" | grep -q "User registered successfully"; then
+        echo "User registration successful. OTP sent to $UNIQUE_EMAIL."
+    else
+        echo "User registration failed: $(echo "$REGISTER_RESPONSE" | jq -r '.error')"
+        exit 1
+    fi
 }
 
-# Variables
-BASE_URL="http://localhost:5000"
-EMAIL="testuser4@example.com" # Use a unique email to avoid conflicts
-PASSWORD="Password1234"
-FIRST_NAME="Pablo"
-LAST_NAME="Neruda"
-STATE="FL"
-ZIPCODE="90001"
-WEBHOOK_URL="https://your-webhook-url.com" # Replace with your actual webhook URL
+# Function to connect to IMAP and retrieve the latest OTP
+retrieve_otp() {
+    echo "=== Step 2: Retrieving OTP from Email ==="
+    
+    # Connect to IMAP server and login using openssl
+    # Fetch emails from the sender and get the latest one
+    IMAP_RESPONSE=$(openssl s_client -crlf -quiet -connect "$IMAP_SERVER:$IMAP_PORT" <<EOF
+a LOGIN $EMAIL_ADDRESS $EMAIL_PASSWORD
+a SELECT INBOX
+a SEARCH FROM "$SENDER_EMAIL"
+a FETCH \$(get_latest_uid) BODY[TEXT]
+a LOGOUT
+EOF
+)
+    
+    # Debug: Print the IMAP response
+    # Uncomment the next line for debugging purposes
+    # echo "$IMAP_RESPONSE"
+    
+    # Extract the UID of the latest email
+    LATEST_UID=$(get_latest_uid)
+    
+    if [ -z "$LATEST_UID" ]; then
+        echo "No emails found from $SENDER_EMAIL."
+        exit 1
+    fi
+    
+    # Fetch the body of the latest email
+    EMAIL_BODY=$(echo "$IMAP_RESPONSE" | sed -n "/UID $LATEST_UID/,/^a LOGOUT/p" | sed '1,4d' | sed '/^a LOGOUT/d')
+    
+    # Debug: Print the email body
+    # Uncomment the next line for debugging purposes
+    # echo "Email Body: $EMAIL_BODY"
+    
+    # Extract the OTP using regex (assuming it's a 6-digit number)
+    OTP=$(echo "$EMAIL_BODY" | grep -oE '\b[0-9]{6}\b' | head -n1)
+    
+    if [ -z "$OTP" ]; then
+        echo "Failed to extract OTP from the email."
+        exit 1
+    fi
+    
+    echo "OTP Retrieved: $OTP"
+    export OTP
+}
 
-# Step 1: Register User
-echo_info "Registering User..."
-REGISTER_RESPONSE=$(curl -s -X POST "$BASE_URL/api/users/register" \
-  -H "Content-Type: application/json" \
-  -d "{
-        \"email\": \"$EMAIL\",
-        \"password\": \"$PASSWORD\",
-        \"first_name\": \"$FIRST_NAME\",
-        \"last_name\": \"$LAST_NAME\",
-        \"state\": \"$STATE\",
-        \"zipcode\": \"$ZIPCODE\"
-      }")
+# Function to verify OTP
+verify_otp() {
+    echo "=== Step 3: Verifying OTP ==="
+    VERIFY_RESPONSE=$(curl -s -X POST "$BASE_URL/api/users/verify-otp" \
+      -H "Content-Type: application/json" \
+      -d "{
+            \"email\": \"$UNIQUE_EMAIL\",
+            \"otp\": \"$OTP\"
+          }")
+    
+    log_response "Verify OTP" "$VERIFY_RESPONSE"
+    
+    if echo "$VERIFY_RESPONSE" | grep -q "Email verified successfully"; then
+        echo "OTP verification successful."
+        TOKEN=$(echo "$VERIFY_RESPONSE" | jq -r '.token')
+    else
+        echo "OTP verification failed: $(echo "$VERIFY_RESPONSE" | jq -r '.error')"
+        exit 1
+    fi
+}
 
-# Check if registration was successful
-if echo "$REGISTER_RESPONSE" | jq -e '.token' > /dev/null; then
-  TOKEN=$(echo "$REGISTER_RESPONSE" | jq -r '.token')
-  echo_success "User registered successfully. Token obtained."
+# Function to login user
+login_user() {
+    echo "=== Step 4: Logging in After Verification ==="
+    LOGIN_RESPONSE=$(curl -s -X POST "$BASE_URL/api/users/login" \
+      -H "Content-Type: application/json" \
+      -d "{
+            \"email\": \"$UNIQUE_EMAIL\",
+            \"password\": \"$TEST_PASSWORD\"
+          }")
+    
+    log_response "Login User" "$LOGIN_RESPONSE"
+    
+    if echo "$LOGIN_RESPONSE" | grep -q "Login successful"; then
+        echo "Login successful."
+        LOGIN_TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.token')
+    else
+        echo "Login failed: $(echo "$LOGIN_RESPONSE" | jq -r '.error')"
+        exit 1
+    fi
+}
+
+# Function to fetch user profile
+fetch_profile() {
+    echo "=== Step 5: Fetching User Profile ==="
+    PROFILE_RESPONSE=$(curl -s -X GET "$BASE_URL/api/users/profile" \
+      -H "Authorization: Bearer $LOGIN_TOKEN")
+    
+    log_response "Fetch User Profile" "$PROFILE_RESPONSE"
+    
+    if echo "$PROFILE_RESPONSE" | grep -q "profile"; then
+        echo "User profile fetched successfully:"
+        echo "$PROFILE_RESPONSE" | jq '.profile'
+    else
+        echo "Fetching profile failed: $(echo "$PROFILE_RESPONSE" | jq -r '.error')"
+        exit 1
+    fi
+}
+
+# Function to resend OTP (optional)
+resend_otp() {
+    echo "=== Step 6: Resending OTP ==="
+    RESEND_RESPONSE=$(curl -s -X POST "$BASE_URL/api/users/resend-otp" \
+      -H "Content-Type: application/json" \
+      -d "{
+            \"email\": \"$UNIQUE_EMAIL\"
+          }")
+    
+    log_response "Resend OTP" "$RESEND_RESPONSE"
+    
+    if echo "$RESEND_RESPONSE" | grep -q "OTP has been resent"; then
+        echo "OTP has been resent to $UNIQUE_EMAIL."
+        echo "Retrieving the new OTP..."
+        retrieve_otp
+        echo "=== Step 7: Verifying Resent OTP ==="
+        VERIFY_RESEND_RESPONSE=$(curl -s -X POST "$BASE_URL/api/users/verify-otp" \
+          -H "Content-Type: application/json" \
+          -d "{
+                \"email\": \"$UNIQUE_EMAIL\",
+                \"otp\": \"$OTP\"
+              }")
+        
+        log_response "Verify Resent OTP" "$VERIFY_RESEND_RESPONSE"
+        
+        if echo "$VERIFY_RESEND_RESPONSE" | grep -q "Email verified successfully"; then
+            echo "Resent OTP verification successful."
+        else
+            echo "Resent OTP verification failed: $(echo "$VERIFY_RESEND_RESPONSE" | jq -r '.error')"
+            exit 1
+        fi
+    else
+        echo "Resend OTP failed: $(echo "$RESEND_RESPONSE" | jq -r '.error')"
+        exit 1
+    fi
+}
+
+# ===========================
+# Execute Test Workflow
+# ===========================
+
+# Register User
+register_user
+
+# Wait for the email to arrive (adjust the sleep duration as needed)
+echo "Waiting for OTP email to arrive..."
+sleep 10
+
+# Retrieve OTP from Email
+retrieve_otp
+
+# Verify OTP
+verify_otp
+
+# Login User
+login_user
+
+# Fetch User Profile
+fetch_profile
+
+# Optional: Resend OTP
+echo -n "Do you want to test resending the OTP? (y/n): "
+read RESPOND
+
+if [[ "$RESPOND" == "y" || "$RESPOND" == "Y" ]]; then
+    resend_otp
 else
-  ERROR_MSG=$(echo "$REGISTER_RESPONSE" | jq -r '.error // .message')
-  echo_error "Registration failed: $ERROR_MSG"
-  exit 1
+    echo "Skipping OTP resend test."
 fi
 
-# Step 2: Login User
-echo_info "Logging in User..."
-LOGIN_RESPONSE=$(curl -s -X POST "$BASE_URL/api/users/login" \
-  -H "Content-Type: application/json" \
-  -d "{
-        \"email\": \"$EMAIL\",
-        \"password\": \"$PASSWORD\"
-      }")
-
-if echo "$LOGIN_RESPONSE" | jq -e '.token' > /dev/null; then
-  TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.token')
-  echo_success "User logged in successfully. Token updated."
-else
-  ERROR_MSG=$(echo "$LOGIN_RESPONSE" | jq -r '.error // .message')
-  echo_error "Login failed: $ERROR_MSG"
-  exit 1
-fi
-
-# Step 3: Fetch User Profile
-echo_info "Fetching User Profile..."
-PROFILE_RESPONSE=$(curl -s -X GET "$BASE_URL/api/users/profile" \
-  -H "Authorization: Bearer $TOKEN")
-
-if echo "$PROFILE_RESPONSE" | jq -e '.profile.id' > /dev/null; then
-  USER_ID=$(echo "$PROFILE_RESPONSE" | jq -r '.profile.id')
-  echo_success "User ID obtained: $USER_ID"
-else
-  ERROR_MSG=$(echo "$PROFILE_RESPONSE" | jq -r '.error // .message')
-  echo_error "Fetching profile failed: $ERROR_MSG"
-  exit 1
-fi
-
-# Step 4: Generate Sandbox Public Token
-echo_info "Generating Sandbox Public Token..."
-SANDBOX_RESPONSE=$(curl -s -X POST "$BASE_URL/api/plaid/sandbox/public_token/create" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d "{
-        \"institution_id\": \"ins_109508\",
-        \"initial_products\": [\"transactions\"],
-        \"webhook\": \"$WEBHOOK_URL\"
-      }")
-
-if echo "$SANDBOX_RESPONSE" | jq -e '.public_token' > /dev/null; then
-  PUBLIC_TOKEN=$(echo "$SANDBOX_RESPONSE" | jq -r '.public_token')
-  echo_success "Public Token obtained: $PUBLIC_TOKEN"
-else
-  ERROR_MSG=$(echo "$SANDBOX_RESPONSE" | jq -r '.error // .message')
-  echo_error "Generating public token failed: $ERROR_MSG"
-  exit 1
-fi
-
-# Step 5: Exchange Public Token for Access Token
-echo_info "Exchanging Public Token for Access Token..."
-EXCHANGE_RESPONSE=$(curl -s -X POST "$BASE_URL/api/plaid/exchange_public_token" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d "{
-        \"publicToken\": \"$PUBLIC_TOKEN\",
-        \"userId\": \"$USER_ID\"
-      }")
-
-if echo "$EXCHANGE_RESPONSE" | jq -e '.success' > /dev/null && [ "$(echo "$EXCHANGE_RESPONSE" | jq -r '.success')" = "true" ]; then
-  BANK_ACCOUNT_ID=$(echo "$EXCHANGE_RESPONSE" | jq -r '.accounts[0].id') # UUID from bank_accounts table
-  echo_success "Access Token exchanged successfully. Bank Account ID: $BANK_ACCOUNT_ID"
-else
-  ERROR_MSG=$(echo "$EXCHANGE_RESPONSE" | jq -r '.error // .message')
-  echo_error "Exchanging public token failed: $ERROR_MSG"
-  exit 1
-fi
-
-# Step 6: Synchronize Transactions
-echo_info "Synchronizing Transactions..."
-SYNC_RESPONSE=$(curl -s -X POST "$BASE_URL/api/plaid/sync" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d "{
-        \"userId\": \"$USER_ID\"
-      }")
-
-# Check if synchronization was successful
-if echo "$SYNC_RESPONSE" | jq -e '.success' > /dev/null && [ "$(echo "$SYNC_RESPONSE" | jq -r '.success')" = "true" ]; then
-  ADDED=$(echo "$SYNC_RESPONSE" | jq -r '.stats.added')
-  MODIFIED=$(echo "$SYNC_RESPONSE" | jq -r '.stats.modified')
-  REMOVED=$(echo "$SYNC_RESPONSE" | jq -r '.stats.removed')
-  echo_success "Transactions synchronized successfully. Added: $ADDED, Modified: $MODIFIED, Removed: $REMOVED"
-else
-  # Capture detailed error message
-  ERROR_MSG=$(echo "$SYNC_RESPONSE" | jq -r '.error // .message // "Unknown error"')
-  DETAILS=$(echo "$SYNC_RESPONSE" | jq -r '.details // empty')
-  echo_error "Synchronizing transactions failed: $ERROR_MSG"
-  
-  # Optionally, display additional details if available
-  if [ "$DETAILS" != "null" ] && [ -n "$DETAILS" ]; then
-    echo_error "Details: $DETAILS"
-  fi
-  
-  exit 1
-fi
-
-# Step 7: Retrieve Transactions
-echo_info "Retrieving Transactions..."
-TRANSACTIONS_RESPONSE=$(curl -s -X POST "$BASE_URL/api/plaid/get_transactions" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d "{
-        \"userId\": \"$USER_ID\",
-        \"bankAccountId\": \"$BANK_ACCOUNT_ID\",
-        \"startDate\": \"2023-01-01\",
-        \"endDate\": \"2023-12-31\",
-        \"page\": 1,
-        \"limit\": 50
-      }")
-
-# Check if transactions were retrieved successfully
-if echo "$TRANSACTIONS_RESPONSE" | jq -e '.transactions' > /dev/null; then
-  TOTAL_TRANSACTIONS=$(echo "$TRANSACTIONS_RESPONSE" | jq '.transactions | length')
-  echo_success "Retrieved $TOTAL_TRANSACTIONS transactions."
-  
-  # Optionally, print transactions
-  echo "$TRANSACTIONS_RESPONSE" | jq '.transactions[] | {id, amount, date, description}'
-else
-  # Capture detailed error message
-  ERROR_MSG=$(echo "$TRANSACTIONS_RESPONSE" | jq -r '.error // .message // "Unknown error"')
-  echo_error "Retrieving transactions failed: $ERROR_MSG"
-  exit 1
-fi
-
-echo_info "API Test Workflow Completed Successfully!"
+echo "=== Test Workflow Completed Successfully ==="

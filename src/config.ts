@@ -1,5 +1,3 @@
-// src/config.ts
-
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -16,6 +14,12 @@ interface Config {
   PLAID_WEBHOOK_URL: string;
   PLAID_WEBHOOK_SECRET: string;
   LOG_LEVEL: string;
+  SMTP_HOST: string;
+  SMTP_PORT: number;
+  SMTP_USER: string;
+  SMTP_PASS: string;
+  SMTP_FROM_EMAIL: string;
+  SMTP_FROM_NAME: string;
 }
 
 const config: Config = {
@@ -30,6 +34,12 @@ const config: Config = {
   PLAID_WEBHOOK_URL: process.env.PLAID_WEBHOOK_URL as string || 'https://your-webhook-url.com',
   PLAID_WEBHOOK_SECRET: process.env.PLAID_WEBHOOK_SECRET as string || 'your_webhook_secret',
   LOG_LEVEL: process.env.LOG_LEVEL as string || 'info',
+  SMTP_HOST: process.env.SUPABASE_SMTP_HOST as string,
+  SMTP_PORT: parseInt(process.env.SUPABASE_SMTP_PORT as string, 10) || 587,
+  SMTP_USER: process.env.SUPABASE_SMTP_USER as string,
+  SMTP_PASS: process.env.SUPABASE_SMTP_PASS as string,
+  SMTP_FROM_EMAIL: process.env.SUPABASE_SMTP_FROM_EMAIL as string,
+  SMTP_FROM_NAME: process.env.SUPABASE_SMTP_FROM_NAME as string,
 };
 
 // Debugging: Log loaded environment variables (Avoid logging sensitive data in production)
@@ -45,6 +55,11 @@ if (process.env.NODE_ENV !== 'production') {
     PLAID_WEBHOOK_URL: config.PLAID_WEBHOOK_URL ? '✔️' : '❌',
     PLAID_WEBHOOK_SECRET: config.PLAID_WEBHOOK_SECRET ? '✔️' : '❌',
     LOG_LEVEL: config.LOG_LEVEL ? '✔️' : '❌',
+    SMTP_HOST: config.SMTP_HOST ? '✔️' : '❌',
+    SMTP_PORT: config.SMTP_PORT ? '✔️' : '❌',
+    SMTP_USER: config.SMTP_USER ? '✔️' : '❌',
+    SMTP_FROM_EMAIL: config.SMTP_FROM_EMAIL ? '✔️' : '❌',
+    SMTP_FROM_NAME: config.SMTP_FROM_NAME ? '✔️' : '❌',
   });
 }
 

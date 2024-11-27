@@ -1,5 +1,3 @@
-// src/types/types.ts
-
 /**
  * User Interface
  */
@@ -11,8 +9,21 @@ export interface User {
   last_name: string;
   state: string;
   zipcode: string;
+  email_verified: boolean; // New field
   cursor?: string; // For transactions sync per user (if needed)
   created_at?: string;
+}
+
+/**
+ * UserOTP Interface
+ */
+export interface UserOTP {
+  id: string;
+  user_id: string;
+  otp_code: string;
+  expires_at: string; // ISO string
+  created_at: string;
+  is_verified: boolean;
 }
 
 /**
@@ -28,9 +39,6 @@ export interface BankAccount {
   account_type: string;
   account_subtype: string;
   account_mask: string;
-  available_balance?: number; // New field
-  current_balance?: number;   // New field
-  currency?: string;         // New field
   cursor?: string; // For transactions sync per account
   created_at?: string;
 }
@@ -47,7 +55,7 @@ export interface Transaction {
   description: string;
   original_description?: string | null;
   category: string;
-  category_detailed?: string | null; // Updated to include null
+  category_detailed?: string | null; // Now allowed to be null
   merchant_name?: string | null;
   pending?: boolean;
   account_id: string;
@@ -74,6 +82,11 @@ export interface Database {
         Row: Transaction;
         Insert: Partial<Transaction>;
         Update: Partial<Transaction>;
+      };
+      user_otps: {
+        Row: UserOTP;
+        Insert: Partial<UserOTP>;
+        Update: Partial<UserOTP>;
       };
       // Define other tables here
     };

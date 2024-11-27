@@ -1,8 +1,6 @@
-// src/routes/userRoutes.ts
-
 import express from 'express';
 import { body } from 'express-validator';
-import { registerUser, loginUser, fetchUserProfile } from '../controllers/userController';
+import { registerUser, loginUser, fetchUserProfile, verifyOTP, resendOTP } from '../controllers/userController';
 import authMiddleware from '../middleware/authMiddleware';
 import { Request, Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
@@ -78,11 +76,32 @@ const loginValidation = [
         .withMessage('Password is required')
 ];
 
+const otpVerificationValidation = [
+    body('email')
+        .isEmail()
+        .normalizeEmail()
+        .withMessage('Valid email is required'),
+    body('otp')
+        .isLength({ min: 6, max: 6 })
+        .withMessage('OTP must be a 6-digit code')
+        .matches(/^\d{6}$/)
+        .withMessage('OTP must contain only digits'),
+];
+
+const resendOTPValidation = [
+    body('email')
+        .isEmail()
+        .normalizeEmail()
+        .withMessage('Valid email is required'),
+];
+
 /**
  * Public routes
  */
 router.post('/register', validate(registrationValidation), registerUser);
 router.post('/login', validate(loginValidation), loginUser);
+router.post('/verify-otp', validate(otpVerificationValidation), verifyOTP);
+router.post('/resend-otp', validate(resendOTPValidation), resendOTP);
 
 /**
  * Protected routes

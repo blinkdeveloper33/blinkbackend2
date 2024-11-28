@@ -39,7 +39,10 @@ const corsOptions = {
   origin: config.CORS_ORIGIN,
   optionsSuccessStatus: 200,
 };
-app.use(cors(corsOptions));
+app.use(cors({
+  origin: '*', // Allow all origins, or specify your Flutter app's URL
+}));
+
 
 // Body Parser (Using built-in Express middleware)
 app.use(express.json());

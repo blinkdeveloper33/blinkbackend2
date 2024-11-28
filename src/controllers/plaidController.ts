@@ -64,7 +64,7 @@ export const createLinkToken = async (req: Request, res: Response): Promise<void
     };
 
     const createTokenResponse = await plaidClient.linkTokenCreate(request);
-    res.json({ linkToken: createTokenResponse.data.link_token });
+    res.json({ link_token: createTokenResponse.data.link_token });
   } catch (error: any) {
     // Enhanced error logging
     if (error.response && error.response.data) {

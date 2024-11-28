@@ -37,7 +37,7 @@ const sendOTPEmail = async (email: string, otp: string): Promise<void> => {
   const mailOptions = {
     from: `"${config.SMTP_FROM_NAME}" <${config.SMTP_FROM_EMAIL}>`,
     to: email,
-    subject: 'Your OTP Code for BlinkBackend2 Registration',
+    subject: 'Your OTP Code for Blink Registration',
     text: `Your OTP code is ${otp}. It is valid for 10 minutes.`,
     html: `<p>Your OTP code is <strong>${otp}</strong>. It is valid for 10 minutes.</p>`,
   };
@@ -47,17 +47,17 @@ const sendOTPEmail = async (email: string, otp: string): Promise<void> => {
 };
 
 /**
- * Registration Controller with OTP
+ * Initial Registration Controller: Registers email and sends OTP
  */
-export const registerUser = async (
+export const registerInitial = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
-  const { email, password, first_name, last_name, state, zipcode } = req.body;
+  const { email } = req.body;
 
   try {
-    // Check if user already exists using .maybeSingle()
+    // Check if user already exists
     const { data: existingUser, error: selectError } = await supabase
       .from('users')
       .select('*')
@@ -70,24 +70,50 @@ export const registerUser = async (
     }
 
     if (existingUser) {
-      res.status(400).json({ error: 'User already exists' });
+      // If email is already verified
+      if (existingUser.email_verified) {
+        res.status(400).json({ error: 'User already exists and email is verified.' });
+        return;
+      }
+      // If email exists but not verified, proceed to resend OTP
+    }
+
+    // Generate OTP
+    const otpCode = generateOTP();
+    const otpExpiration = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+
+    // If user exists but not verified, update OTP
+    if (existingUser && !existingUser.email_verified) {
+      const { error: otpUpdateError } = await supabase
+        .from('user_otps')
+        .insert([
+          {
+            user_id: existingUser.id,
+            otp_code: otpCode,
+            expires_at: otpExpiration.toISOString(),
+          },
+        ]);
+
+      if (otpUpdateError) {
+        logger.error('Failed to generate OTP:', otpUpdateError.message);
+        throw new Error('Failed to generate OTP: ' + otpUpdateError.message);
+      }
+
+      // Send OTP via email
+      await sendOTPEmail(email, otpCode);
+
+      res.status(200).json({
+        message: 'OTP has been sent to your email address.',
+      });
       return;
     }
 
-    // Hash the password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Insert new user with email_verified = false
+    // If user does not exist, create a new user entry without password and other info
     const { data: newUser, error: insertError } = await supabase
       .from('users')
       .insert([
         {
           email,
-          password: hashedPassword,
-          first_name,
-          last_name,
-          state,
-          zipcode,
           email_verified: false,
         },
       ])
@@ -98,10 +124,6 @@ export const registerUser = async (
       logger.error('Failed to register user:', insertError?.message || 'No user data returned');
       throw new Error('Failed to register user: ' + (insertError?.message || 'No user data returned'));
     }
-
-    // Generate OTP
-    const otpCode = generateOTP();
-    const otpExpiration = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
 
     // Store OTP in user_otps table
     const { error: otpInsertError } = await supabase
@@ -123,11 +145,94 @@ export const registerUser = async (
     await sendOTPEmail(email, otpCode);
 
     // Respond indicating that OTP verification is required
-    res.status(201).json({
-      message: 'User registered successfully. Please verify your email with the OTP sent.',
+    res.status(200).json({
+      message: 'Registration initiated. Please verify your email with the OTP sent.',
     });
   } catch (error: any) {
-    logger.error('Registration Error:', error.message);
+    logger.error('Initial Registration Error:', error.message);
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+};
+
+/**
+ * Complete Registration Controller: Stores user info and sets password
+ */
+export const registerComplete = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  const { email, password, first_name, last_name, state, zipcode } = req.body;
+
+  try {
+    // Fetch the user by email
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (userError) {
+      logger.error('Error fetching user for registration completion:', userError.message);
+      throw new Error('Error fetching user: ' + userError.message);
+    }
+
+    if (!user) {
+      res.status(400).json({ error: 'User does not exist. Please initiate registration first.' });
+      return;
+    }
+
+    if (user.email_verified) {
+      res.status(400).json({ error: 'Email is already verified and registration is complete.' });
+      return;
+    }
+
+    // Check if OTP has been verified
+    const { data: latestOTP, error: otpError } = await supabase
+      .from('user_otps')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('is_verified', true)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (otpError) {
+      logger.error('Error checking OTP verification:', otpError.message);
+      throw new Error('Error checking OTP verification: ' + otpError.message);
+    }
+
+    if (!latestOTP) {
+      res.status(400).json({ error: 'Email has not been verified. Please verify your email first.' });
+      return;
+    }
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Update user with profile information and password
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({
+        password: hashedPassword,
+        first_name,
+        last_name,
+        state,
+        zipcode,
+        email_verified: true, // Mark as verified
+      })
+      .eq('id', user.id);
+
+    if (updateError) {
+      logger.error('Failed to complete registration:', updateError.message);
+      throw new Error('Failed to complete registration: ' + updateError.message);
+    }
+
+    res.status(200).json({
+      message: 'Registration completed successfully.',
+    });
+  } catch (error: any) {
+    logger.error('Complete Registration Error:', error.message);
     res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 };
@@ -199,27 +304,16 @@ export const verifyOTP = async (
       throw new Error('Failed to verify OTP: ' + otpUpdateError.message);
     }
 
-    // Update user's email_verified status
-    const { error: userUpdateError } = await supabase
-      .from('users')
-      .update({ email_verified: true })
-      .eq('id', user.id);
-
-    if (userUpdateError) {
-      logger.error('Failed to update user verification status:', userUpdateError.message);
-      throw new Error('Failed to update user verification status: ' + userUpdateError.message);
-    }
-
-    // Optionally, generate a JWT token upon successful verification
-    const token = jwt.sign(
+    // Generate a temporary token for registration completion
+    const tempToken = jwt.sign(
       { id: user.id, email: user.email },
       config.JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '15m' } // Temporary token valid for 15 minutes
     );
 
     res.status(200).json({
-      message: 'Email verified successfully',
-      token,
+      message: 'Email verified successfully. Proceed to complete registration.',
+      tempToken,
     });
   } catch (error: any) {
     logger.error('OTP Verification Error:', error.message);

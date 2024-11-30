@@ -9,52 +9,37 @@ import logger from '../services/logger';
  * Interface for authenticated requests
  */
 export interface AuthenticatedRequest extends Request {
-  user: {
-    id: string;
-    email: string;
-  };
+  userId?: string;
 }
 
 /**
  * Authentication Middleware
  */
-const authMiddleware = (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void => {
-  const authHeader = req.headers.authorization;
+const authMiddleware = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const authHeader = req.headers['authorization'];
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Unauthorized: No token provided' });
+  if (!authHeader) {
+    res.status(401).json({ error: 'Authorization header missing.' });
     return;
   }
 
-  const token = authHeader.split(' ')[1];
+  const token = authHeader.split(' ')[1]; // Expecting format: "Bearer <token>"
 
-  try {
-    const decoded = jwt.verify(token, config.JWT_SECRET) as {
-      id: string;
-      email: string;
-      iat: number;
-      exp: number;
-    };
-
-    // Attach user information to the request
-    (req as AuthenticatedRequest).user = {
-      id: decoded.id,
-      email: decoded.email,
-    };
-
-    next();
-  } catch (error: any) {
-    logger.warn('Invalid JWT token:', error.message);
-    if (error.name === 'TokenExpiredError') {
-      res.status(401).json({ error: 'Unauthorized: Token has expired' });
-    } else {
-      res.status(401).json({ error: 'Unauthorized: Invalid token' });
-    }
+  if (!token) {
+    res.status(401).json({ error: 'Token missing.' });
+    return;
   }
+
+  jwt.verify(token, config.JWT_SECRET, (err, decoded: any) => {
+    if (err) {
+      logger.warn('Invalid JWT token:', err.message);
+      res.status(403).json({ error: 'Invalid token.' });
+      return;
+    }
+
+    req.userId = decoded.userId;
+    next();
+  });
 };
 
 export default authMiddleware;

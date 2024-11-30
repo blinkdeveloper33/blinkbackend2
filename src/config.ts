@@ -1,3 +1,5 @@
+// src/config.ts
+
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -34,12 +36,12 @@ const config: Config = {
   PLAID_WEBHOOK_URL: process.env.PLAID_WEBHOOK_URL as string || 'https://your-webhook-url.com',
   PLAID_WEBHOOK_SECRET: process.env.PLAID_WEBHOOK_SECRET as string || 'your_webhook_secret',
   LOG_LEVEL: process.env.LOG_LEVEL as string || 'info',
-  SMTP_HOST: process.env.SUPABASE_SMTP_HOST as string,
-  SMTP_PORT: parseInt(process.env.SUPABASE_SMTP_PORT as string, 10) || 587,
-  SMTP_USER: process.env.SUPABASE_SMTP_USER as string,
-  SMTP_PASS: process.env.SUPABASE_SMTP_PASS as string,
-  SMTP_FROM_EMAIL: process.env.SUPABASE_SMTP_FROM_EMAIL as string,
-  SMTP_FROM_NAME: process.env.SUPABASE_SMTP_FROM_NAME as string,
+  SMTP_HOST: process.env.SMTP_HOST as string,
+  SMTP_PORT: parseInt(process.env.SMTP_PORT as string, 10) || 465,
+  SMTP_USER: process.env.SMTP_USER as string,
+  SMTP_PASS: process.env.SMTP_PASS as string,
+  SMTP_FROM_EMAIL: process.env.SMTP_FROM_EMAIL as string,
+  SMTP_FROM_NAME: process.env.SMTP_FROM_NAME as string,
 };
 
 // Debugging: Log loaded environment variables (Avoid logging sensitive data in production)

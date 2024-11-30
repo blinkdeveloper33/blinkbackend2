@@ -4,11 +4,11 @@ import express, { Request, Response, NextFunction, Router } from 'express';
 import { body, ValidationChain, validationResult } from 'express-validator';
 import {
   registerInitial,
+  verifyOTP,
+  resendOtp,
   registerComplete,
   loginUser,
   fetchUserProfile,
-  verifyOTP,
-  resendOTP
 } from '../controllers/userController';
 import authMiddleware from '../middleware/authMiddleware';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
@@ -38,59 +38,18 @@ const validate = (validations: ValidationChain[]) => {
 /**
  * Input validation schemas
  */
-const initialRegistrationValidation = [
+const initialRegistrationValidation: ValidationChain[] = [
   body('email')
     .isEmail()
     .normalizeEmail()
-    .withMessage('Valid email is required'),
+    .withMessage('A valid email address is required'),
 ];
 
-const completeRegistrationValidation = [
+const verifyOtpValidation: ValidationChain[] = [
   body('email')
     .isEmail()
     .normalizeEmail()
-    .withMessage('Valid email is required'),
-  body('password')
-    .isLength({ min: 6 })
-    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-    .withMessage('Password must be at least 6 characters and contain uppercase, lowercase, and numbers'),
-  body('first_name')
-    .trim()
-    .notEmpty()
-    .isLength({ min: 2, max: 50 })
-    .withMessage('First name must be between 2 and 50 characters'),
-  body('last_name')
-    .trim()
-    .notEmpty()
-    .isLength({ min: 2, max: 50 })
-    .withMessage('Last name must be between 2 and 50 characters'),
-  body('state')
-    .trim()
-    .notEmpty()
-    .isLength({ min: 2, max: 2 })
-    .isUppercase()
-    .withMessage('State must be a valid 2-letter US state code'),
-  body('zipcode')
-    .trim()
-    .isPostalCode('US')
-    .withMessage('Valid US zipcode is required')
-];
-
-const loginValidation = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Valid email is required'),
-  body('password')
-    .notEmpty()
-    .withMessage('Password is required')
-];
-
-const otpVerificationValidation = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Valid email is required'),
+    .withMessage('A valid email address is required'),
   body('otp')
     .isLength({ min: 6, max: 6 })
     .withMessage('OTP must be a 6-digit code')
@@ -98,26 +57,99 @@ const otpVerificationValidation = [
     .withMessage('OTP must contain only digits'),
 ];
 
-const resendOTPValidation = [
+const resendOtpValidation: ValidationChain[] = [
   body('email')
     .isEmail()
     .normalizeEmail()
-    .withMessage('Valid email is required'),
+    .withMessage('A valid email address is required'),
+];
+
+const completeRegistrationValidation: ValidationChain[] = [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('A valid email address is required'),
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters long')
+    .matches(/[A-Z]/)
+    .withMessage('Password must contain at least one uppercase letter')
+    .matches(/[a-z]/)
+    .withMessage('Password must contain at least one lowercase letter')
+    .matches(/\d/)
+    .withMessage('Password must contain at least one number')
+    .matches(/[!@#$%^&*(),.?":{}|<>]/)
+    .withMessage('Password must contain at least one special character'),
+  body('first_name')
+    .trim()
+    .notEmpty()
+    .withMessage('First name is required'),
+  body('last_name')
+    .trim()
+    .notEmpty()
+    .withMessage('Last name is required'),
+  body('state')
+    .trim()
+    .notEmpty()
+    .withMessage('State is required')
+    .isLength({ min: 2, max: 2 })
+    .withMessage('State must be a valid 2-letter US state code')
+    .isUppercase()
+    .withMessage('State code must be uppercase'),
+  body('zipcode')
+    .trim()
+    .isPostalCode('US')
+    .withMessage('A valid US ZIP code is required'),
+];
+
+const loginValidation: ValidationChain[] = [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('A valid email address is required'),
+  body('password')
+    .notEmpty()
+    .withMessage('Password is required'),
 ];
 
 /**
  * Public routes
  */
-router.post('/register-initial', validate(initialRegistrationValidation), registerInitial);
-router.post('/verify-otp', validate(otpVerificationValidation), verifyOTP);
-router.post('/register-complete', validate(completeRegistrationValidation), registerComplete);
-router.post('/resend-otp', validate(resendOTPValidation), resendOTP);
-router.post('/login', validate(loginValidation), loginUser);
+router.post(
+  '/register-initial',
+  validate(initialRegistrationValidation),
+  registerInitial
+);
+
+router.post(
+  '/verify-otp',
+  validate(verifyOtpValidation),
+  verifyOTP
+);
+
+router.post(
+  '/resend-otp',
+  validate(resendOtpValidation),
+  resendOtp
+);
+
+router.post(
+  '/register-complete',
+  validate(completeRegistrationValidation),
+  registerComplete
+);
+
+router.post(
+  '/login',
+  validate(loginValidation),
+  loginUser
+);
 
 /**
  * Protected routes
  */
 router.use(authMiddleware);
+
 router.get('/profile', (req: Request, res: Response, next: NextFunction) => {
   const authReq = req as AuthenticatedRequest;
   fetchUserProfile(authReq, res, next);

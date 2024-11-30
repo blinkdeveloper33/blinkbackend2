@@ -15,7 +15,7 @@ import userRoutes from './routes/userRoutes';
 import logger from './services/logger';
 
 // Import Scheduler
-import { scheduleBalanceSync } from './services/scheduler';
+import { scheduleCleanupExpiredSessions } from './services/scheduler';
 
 const app: Application = express();
 
@@ -42,7 +42,6 @@ const corsOptions = {
 app.use(cors({
   origin: '*', // Allow all origins, or specify your Flutter app's URL
 }));
-
 
 // Body Parser (Using built-in Express middleware)
 app.use(express.json());
@@ -73,7 +72,7 @@ app.listen(config.PORT, () => {
   logger.info(`Server is running on port ${config.PORT}`);
 
   // Start scheduled tasks
-  scheduleBalanceSync();
+  scheduleCleanupExpiredSessions();
 });
 
 export default app;

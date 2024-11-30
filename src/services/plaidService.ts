@@ -1,29 +1,18 @@
-// src/services/plaidService.ts
+// src/services/supabaseService.ts
 
-import { Configuration, PlaidApi, PlaidEnvironments } from 'plaid';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import config from '../config';
+import { Database } from '../types/types';
 
-// Validate required configuration
-if (!config.PLAID_CLIENT_ID || !config.PLAID_SECRET) {
-  throw new Error('Missing required Plaid credentials');
-}
-
-const configuration = new Configuration({
-  basePath: PlaidEnvironments[config.PLAID_ENV as keyof typeof PlaidEnvironments] 
-    || PlaidEnvironments.sandbox,
-  baseOptions: {
-    headers: {
-      'PLAID-CLIENT-ID': config.PLAID_CLIENT_ID,
-      'PLAID-SECRET': config.PLAID_SECRET,
-      'Plaid-Version': '2020-09-14',
-      'Content-Type': 'application/json'
-    },
-  },
-});
-
-const plaidClient = new PlaidApi(configuration);
+/**
+ * Initialize the Supabase client using the service role key for admin access.
+ */
+const supabase: SupabaseClient<Database> = createClient<Database>(
+  config.SUPABASE_URL,
+  config.SUPABASE_SERVICE_ROLE_KEY
+);
 
 // Prevent modifications to the client after creation
-Object.freeze(plaidClient);
+Object.freeze(supabase);
 
-export default plaidClient;
+export default supabase;

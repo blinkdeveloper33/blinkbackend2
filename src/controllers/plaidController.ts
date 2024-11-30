@@ -1,130 +1,175 @@
-// src/controllers/plaidController.ts
-
 import { 
-  Products, 
-  CountryCode,
-  Transaction as PlaidTransaction,
-  TransactionsSyncRequest,
-  TransactionsSyncResponse,
-  AccountsGetResponse,
+  Configuration, 
+  CountryCode, 
+  PlaidApi, 
+  PlaidEnvironments, 
+  Products,
+  SandboxPublicTokenCreateRequest,
+  AccountBase,
+  AccountBalance,
+  Transaction as PlaidApiTransaction,
+  TransactionsSyncRequest as PlaidTransactionsSyncRequest,
+  TransactionsSyncResponse as PlaidApiTransactionsSyncResponse,
+  RemovedTransaction,
+  AccountType,
+  AccountSubtype
 } from 'plaid';
 import { Request, Response, NextFunction } from 'express';
-import supabase from '../services/supabaseService';
-import plaidClient from '../services/plaidService';
+import { createClient } from '@supabase/supabase-js';
 import logger from '../services/logger';
-import { Transaction, BankAccount } from '../types/types';
 import config from '../config';
-import crypto from 'crypto';
 
-/**
- * Generates a Sandbox public token using Plaid's /sandbox/public_token/create endpoint.
- */
+// Initialize clients
+const configuration = new Configuration({
+  basePath: PlaidEnvironments[config.PLAID_ENV as keyof typeof PlaidEnvironments],
+  baseOptions: {
+    headers: {
+      'PLAID-CLIENT-ID': config.PLAID_CLIENT_ID,
+      'PLAID-SECRET': config.PLAID_SECRET,
+      'Plaid-Version': '2020-09-14',
+    },
+  },
+});
+
+const plaidClient = new PlaidApi(configuration);
+const supabase = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY);
+
+// Type definitions
+interface CustomAccountBalance extends AccountBalance {
+  available: number | null;
+  current: number | null;
+  iso_currency_code: string | null;
+  limit: number | null;
+  unofficial_currency_code: string | null;
+}
+
+interface CustomAccountBalance extends AccountBalance {
+  available: number | null;
+  current: number | null;
+  iso_currency_code: string | null;
+  limit: number | null;
+  unofficial_currency_code: string | null;
+}
+
+interface PlaidAccount extends Omit<AccountBase, 'balances' | 'type' | 'subtype'> {
+  account_id: string;
+  name: string;
+  type: AccountType; // Fix: Ensure compatibility by using AccountType
+  subtype: AccountSubtype | null; // Fix: Ensure compatibility by using AccountSubtype
+  mask: string;
+  balances: CustomAccountBalance; // Extend balances with CustomAccountBalance
+}
+
+
+interface Transaction {
+  transaction_id: string;
+  bank_account_id: string;
+  account_id: string;
+  amount: number;
+  date: string;
+  description: string;
+  original_description: string | null;
+  category: string;
+  category_detailed: string | null;
+  merchant_name: string | null;
+  pending: boolean;
+  created_at: string;
+}
+
+interface TransactionsSyncRequest extends PlaidTransactionsSyncRequest {
+  options: {
+    include_personal_finance_category: boolean;
+    include_original_description: boolean;
+  };
+}
+
+interface CustomTransactionsSyncResponse {
+  added: PlaidApiTransaction[];
+  modified: PlaidApiTransaction[];
+  removed: RemovedTransaction[];
+  next_cursor: string;
+  has_more: boolean;
+}
+
+// Generate a sandbox public token
 export const generateSandboxPublicToken = async (req: Request, res: Response): Promise<void> => {
   try {
     const { institution_id, initial_products, webhook } = req.body;
-
-    const response = await plaidClient.sandboxPublicTokenCreate({
-      institution_id: institution_id || 'ins_109508', // Default to a Plaid sandbox institution
-      initial_products: initial_products || ['transactions'], // Default to "transactions" product
-      options: {
-        webhook: webhook || config.PLAID_WEBHOOK_URL, // Use your configured webhook URL
-      },
-    });
-
+    const tokenRequest: SandboxPublicTokenCreateRequest = {
+      institution_id: institution_id || 'ins_109508',
+      initial_products: initial_products || [Products.Transactions],
+      options: { webhook: webhook || config.PLAID_WEBHOOK_URL }
+    };
+    const response = await plaidClient.sandboxPublicTokenCreate(tokenRequest);
     res.status(200).json({
       public_token: response.data.public_token,
-      request_id: response.data.request_id,
+      request_id: response.data.request_id
     });
   } catch (error: any) {
-    // Enhanced error logging
-    if (error.response && error.response.data) {
-      logger.error('Error generating sandbox public token:', JSON.stringify(error.response.data));
-      res.status(500).json({ error: 'Failed to generate sandbox public token', details: error.response.data });
-    } else {
-      logger.error('Error generating sandbox public token:', error.message);
-      res.status(500).json({ error: 'Failed to generate sandbox public token', details: error.message });
-    }
+    logger.error('Error generating sandbox public token:', error.response?.data || error.message);
+    res.status(500).json({
+      error: 'Failed to generate sandbox public token',
+      details: error.response?.data || error.message
+    });
   }
 };
 
-/**
- * Creates a Plaid Link Token
- */
+// Create a link token
 export const createLinkToken = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.body;
-
     const request = {
       user: { client_user_id: userId },
-      client_name: 'Your App Name',
+      client_name: config.PLAID_CLIENT_ID || 'Your App Name',
       products: ['transactions' as Products],
       country_codes: ['US' as CountryCode],
       language: 'en',
       webhook: config.PLAID_WEBHOOK_URL,
     };
-
     const createTokenResponse = await plaidClient.linkTokenCreate(request);
     res.json({ link_token: createTokenResponse.data.link_token });
   } catch (error: any) {
-    // Enhanced error logging
-    if (error.response && error.response.data) {
-      logger.error('Error creating link token:', JSON.stringify(error.response.data));
-      res.status(500).json({ error: 'Failed to create link token', details: error.response.data });
-    } else {
-      logger.error('Error creating link token:', error.message);
-      res.status(500).json({ error: 'Failed to create link token', details: error.message });
-    }
+    logger.error('Error creating link token:', error.response?.data || error.message);
+    res.status(500).json({
+      error: 'Failed to create link token',
+      details: error.response?.data || error.message
+    });
   }
 };
 
-/**
- * Exchanges a public token for an access token
- */
+// Exchange a public token for an access token
 export const exchangePublicToken = async (req: Request, res: Response): Promise<void> => {
   try {
     const { publicToken, userId } = req.body;
-
-    // Exchange public token for access token and item ID
     const exchangeResponse = await plaidClient.itemPublicTokenExchange({
       public_token: publicToken,
     });
-
     const accessToken = exchangeResponse.data.access_token;
     const itemId = exchangeResponse.data.item_id;
-
-    // Get institution and account details
-    const authResponse = await plaidClient.authGet({ access_token: accessToken });
-    const accounts = authResponse.data.accounts;
-
-    // Prepare bank accounts data for upsert
-    const bankAccountsToInsert = accounts.map((account) => ({
+    const accountsResponse = await plaidClient.accountsGet({ access_token: accessToken });
+    const bankAccountsToInsert = accountsResponse.data.accounts.map((account: AccountBase) => ({
       user_id: userId,
       plaid_access_token: accessToken,
       plaid_item_id: itemId,
       account_id: account.account_id,
       account_name: account.name,
       account_type: account.type,
-      account_subtype: account.subtype,
-      account_mask: account.mask,
-      cursor: null, // Initialize cursor as null
+      account_subtype: account.subtype || 'unknown',
+      account_mask: account.mask || '',
+      cursor: null,
       created_at: new Date().toISOString(),
-      available_balance: account.balances.available,
-      current_balance: account.balances.current,
-      currency: account.balances.iso_currency_code,
+      available_balance: account.balances.available || 0,
+      current_balance: account.balances.current || 0,
+      currency: account.balances.iso_currency_code || 'USD',
     }));
-
-    // Use upsert to handle duplicate account_id
     const { data, error: upsertError } = await supabase
       .from('bank_accounts')
       .upsert(bankAccountsToInsert, { onConflict: 'account_id' })
-      .select(); // Fetch the upserted rows
-
+      .select();
     if (upsertError) throw upsertError;
-
-    // Map the upserted bank accounts to return the correct UUID `id`
     const responseAccounts = data.map((account: any) => ({
-      id: account.id, // UUID from `bank_accounts` table
-      account_id: account.account_id, // Plaid's account_id
+      id: account.id,
+      account_id: account.account_id,
       name: account.account_name,
       type: account.account_type,
       subtype: account.account_subtype,
@@ -132,48 +177,36 @@ export const exchangePublicToken = async (req: Request, res: Response): Promise<
       current_balance: account.current_balance,
       currency: account.currency,
     }));
-
-    res.json({ 
+    res.json({
       success: true,
       message: 'Bank accounts connected successfully',
       accounts: responseAccounts
     });
   } catch (error: any) {
-    // Enhanced error logging with proper message formatting
-    logger.error(`Error exchanging public token: ${JSON.stringify(error.response?.data || error.message)}`);
-    res.status(500).json({ error: 'Failed to exchange public token', details: error.response?.data || error.message });
+    logger.error(`Error exchanging public token: ${error.message}`);
+    res.status(500).json({
+      error: 'Failed to exchange public token',
+      details: error.response?.data || error.message
+    });
   }
 };
 
-/**
- * Helper function to synchronize transactions for a user
- */
+// Sync transactions for a user
 export const syncTransactionsForUser = async (userId: string): Promise<{ added: number, modified: number, removed: number }> => {
   try {
     const { data: bankAccounts, error: bankError } = await supabase
       .from('bank_accounts')
       .select('*')
       .eq('user_id', userId);
-
-    if (bankError) {
-      throw new Error('Error fetching bank accounts: ' + bankError.message);
-    }
-
-    if (!bankAccounts || bankAccounts.length === 0) {
-      throw new Error('No bank accounts found for user');
-    }
-
+    if (bankError) throw new Error('Error fetching bank accounts: ' + bankError.message);
+    if (!bankAccounts || bankAccounts.length === 0) throw new Error('No bank accounts found for user');
     let totalAdded = 0;
     let totalModified = 0;
     let totalRemoved = 0;
-
     for (const account of bankAccounts) {
       let hasMore = true;
       let currentCursor = account.cursor || null;
-      let iterations = 0;
-      const maxIterations = 5; // Prevent infinite loops
-
-      while (hasMore && iterations < maxIterations) {
+      while (hasMore) {
         const syncRequest: TransactionsSyncRequest = {
           access_token: account.plaid_access_token,
           cursor: currentCursor || undefined,
@@ -182,102 +215,60 @@ export const syncTransactionsForUser = async (userId: string): Promise<{ added: 
             include_original_description: true
           }
         };
-
-        try {
-          // Await the transactionsSync call and extract data
-          const response = await plaidClient.transactionsSync(syncRequest);
-          const syncResponse: TransactionsSyncResponse = response.data;
-
-          const { added, modified, removed, next_cursor, has_more } = syncResponse;
-
-          const transactionsToUpsert: Partial<Transaction>[] = [...added, ...modified].map((txn: PlaidTransaction) => ({
-            transaction_id: txn.transaction_id, // Ensure this is unique
-            bank_account_id: account.id, // Linking transaction to account
-            account_id: txn.account_id, // Linking transaction to account
-            amount: txn.amount,
-            date: txn.date,
-            description: txn.name,
-            original_description: txn.original_description || '', // Ensure string
-            category: txn.category ? txn.category[0] : 'Uncategorized',
-            category_detailed: txn.category ? txn.category.join(', ') : null, // Now allowed to be null
-            merchant_name: txn.merchant_name || null,
-            pending: txn.pending || false,
-            created_at: new Date().toISOString()
-          }));
-
-          if (transactionsToUpsert.length > 0) {
-            const { error: upsertError } = await supabase
-              .from('transactions')
-              .upsert(transactionsToUpsert, { 
-                onConflict: 'transaction_id',
-                ignoreDuplicates: false
-              });
-
-            if (upsertError) throw new Error('Error upserting transactions: ' + upsertError.message);
-
-            totalAdded += added.length;
-            totalModified += modified.length;
-          }
-
-          if (removed.length > 0) {
-            const { error: deleteError } = await supabase
-              .from('transactions')
-              .delete()
-              .in('transaction_id', removed.map(t => t.transaction_id));
-
-            if (deleteError) throw new Error('Error deleting transactions: ' + deleteError.message);
-
-            totalRemoved += removed.length;
-          }
-
-          // Fetch and store account balances after syncing transactions
-          await fetchAndStoreAccountBalances(userId);
-
-          currentCursor = next_cursor;
-          hasMore = has_more;
-          iterations++;
-        } catch (syncError: any) {
-          logger.error(`Error during transaction sync for account ${account.id}:`, syncError.message);
-          throw syncError;
+        const response = await plaidClient.transactionsSync(syncRequest);
+        const syncResponse = response.data as CustomTransactionsSyncResponse;
+        const { added, modified, removed, next_cursor, has_more } = syncResponse;
+        const transactionsToUpsert: Partial<Transaction>[] = [...added, ...modified].map((txn: PlaidApiTransaction) => ({
+          transaction_id: txn.transaction_id,
+          bank_account_id: account.id,
+          account_id: txn.account_id,
+          amount: txn.amount,
+          date: txn.date,
+          description: txn.name,
+          original_description: txn.original_description || '',
+          category: txn.category ? txn.category[0] : 'Uncategorized',
+          category_detailed: txn.category ? txn.category.join(', ') : null,
+          merchant_name: txn.merchant_name || null,
+          pending: txn.pending || false,
+          created_at: new Date().toISOString()
+        }));
+        if (transactionsToUpsert.length > 0) {
+          const { error: upsertError } = await supabase
+            .from('transactions')
+            .upsert(transactionsToUpsert, { onConflict: 'transaction_id' });
+          if (upsertError) throw new Error('Error upserting transactions: ' + upsertError.message);
+          totalAdded += added.length;
+          totalModified += modified.length;
         }
+        if (removed.length > 0) {
+          const { error: deleteError } = await supabase
+            .from('transactions')
+            .delete()
+            .in('transaction_id', removed.map(t => t.transaction_id));
+          if (deleteError) throw new Error('Error deleting transactions: ' + deleteError.message);
+          totalRemoved += removed.length;
+        }
+        currentCursor = next_cursor;
+        hasMore = has_more;
       }
-
-      // Update the cursor in the bank_accounts table
-      if (currentCursor) {
-        const { error: updateError } = await supabase
-          .from('bank_accounts')
-          .update({ cursor: currentCursor })
-          .eq('id', account.id);
-
-        if (updateError) throw new Error('Error updating cursor: ' + updateError.message);
-      }
+      const { error: updateError } = await supabase
+        .from('bank_accounts')
+        .update({ cursor: currentCursor })
+        .eq('id', account.id);
+      if (updateError) throw new Error('Error updating cursor: ' + updateError.message);
     }
-
-    return {
-      added: totalAdded,
-      modified: totalModified,
-      removed: totalRemoved
-    };
-
+    return { added: totalAdded, modified: totalModified, removed: totalRemoved };
   } catch (error: any) {
     logger.error('Sync Error:', error.message);
     throw error;
   }
 };
 
-/**
- * Synchronizes transactions from Plaid (Express Handler)
- */
-export const transactionsSyncHandler = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
+// Transactions sync handler
+export const transactionsSyncHandler = async (req: Request, res: Response): Promise<void> => {
   const { userId } = req.body;
-
   try {
     const stats = await syncTransactionsForUser(userId);
-
     res.json({
       success: true,
       stats: {
@@ -292,79 +283,48 @@ export const transactionsSyncHandler = async (
   }
 };
 
-/**
- * Helper function to retrieve and store account balances
- */
+// Fetch and store account balances
 export const fetchAndStoreAccountBalances = async (userId: string): Promise<void> => {
   try {
-    // Fetch bank accounts for the user
     const { data: bankAccounts, error: bankError } = await supabase
       .from('bank_accounts')
       .select('*')
       .eq('user_id', userId);
-
-    if (bankError) {
-      throw new Error('Error fetching bank accounts: ' + bankError.message);
-    }
-
-    if (!bankAccounts || bankAccounts.length === 0) {
-      throw new Error('No bank accounts found for user');
-    }
-
+    if (bankError) throw new Error('Error fetching bank accounts: ' + bankError.message);
+    if (!bankAccounts || bankAccounts.length === 0) throw new Error('No bank accounts found for user');
     for (const account of bankAccounts) {
-      try {
-        // Fetch account balances from Plaid
-        const response = await plaidClient.accountsGet({
-          access_token: account.plaid_access_token,
-        });
-
-        const accounts: AccountsGetResponse['accounts'] = response.data.accounts;
-
-        // Find the corresponding account
-        const plaidAccount = accounts.find(acc => acc.account_id === account.account_id);
-        if (!plaidAccount) {
-          logger.warn(`Account ID ${account.account_id} not found in Plaid response.`);
-          continue;
-        }
-
-        const balanceData = {
-          available_balance: plaidAccount.balances.available,
-          current_balance: plaidAccount.balances.current,
-          currency: plaidAccount.balances.iso_currency_code,
-        };
-
-        // Update the bank_accounts table with balance data
-        const { error: updateError } = await supabase
-          .from('bank_accounts')
-          .update(balanceData)
-          .eq('id', account.id);
-
-        if (updateError) {
-          throw new Error(`Error updating balance for account ${account.id}: ${updateError.message}`);
-        }
-
-        logger.info(`Updated balance for account ${account.account_id}`);
-      } catch (balanceError: any) {
-        logger.error(`Failed to fetch/store balance for account ${account.account_id}: ${balanceError.message}`);
-        // Depending on requirements, decide whether to continue or halt
+      const response = await plaidClient.accountsGet({
+        access_token: account.plaid_access_token,
+      });
+      const accounts = response.data.accounts;
+      const plaidAccount = accounts.find((acc: AccountBase) => acc.account_id === account.account_id);
+      if (!plaidAccount) {
+        logger.warn(`Account ID ${account.account_id} not found in Plaid response.`);
+        continue;
       }
+      const balanceData = {
+        available_balance: plaidAccount.balances.available || 0,
+        current_balance: plaidAccount.balances.current || 0,
+        currency: plaidAccount.balances.iso_currency_code || 'USD',
+      };
+      const { error: updateError } = await supabase
+        .from('bank_accounts')
+        .update(balanceData)
+        .eq('id', account.id);
+      if (updateError) {
+        throw new Error(`Error updating balance for account ${account.id}: ${updateError.message}`);
+      }
+      logger.info(`Updated balance for account ${account.account_id}`);
     }
   } catch (error: any) {
-    logger.error(`Error in fetchAndStoreAccountBalances: ${error.message}`, { stack: error.stack });
+    logger.error(`Error in fetchAndStoreAccountBalances: ${error.message}`);
     throw error;
   }
 };
 
-/**
- * Synchronizes account balances for a user (Express Handler)
- */
-export const syncBalancesHandler = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
+// Sync balances handler
+export const syncBalancesHandler = async (req: Request, res: Response): Promise<void> => {
   const { userId } = req.body;
-
   try {
     await fetchAndStoreAccountBalances(userId);
     res.json({ success: true, message: 'Account balances synchronized successfully' });
@@ -374,19 +334,11 @@ export const syncBalancesHandler = async (
   }
 };
 
-/**
- * Retrieves transactions for a user with pagination and date filtering
- */
+// Get transactions for a user
 export const getTransactions = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId, bankAccountId, startDate, endDate, page = 1, limit = 50 } = req.body;
-
-    // Validate parameters (assuming validation is already done via express-validator)
-
-    // Calculate offset for pagination
     const offset = (page - 1) * limit;
-
-    // Fetch transactions from Supabase
     const { data: transactions, error } = await supabase
       .from('transactions')
       .select('*')
@@ -396,11 +348,7 @@ export const getTransactions = async (req: Request, res: Response): Promise<void
       .lte('date', endDate)
       .order('date', { ascending: false })
       .range(offset, offset + limit - 1);
-
-    if (error) {
-      throw new Error('Error fetching transactions: ' + error.message);
-    }
-
+    if (error) throw new Error('Error fetching transactions: ' + error.message);
     res.json({
       success: true,
       page,

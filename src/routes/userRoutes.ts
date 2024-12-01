@@ -26,7 +26,7 @@ const validate = (validations: ValidationChain[]) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       res.status(400).json({ 
-          status: 'error',
+          success: false,
           errors: errors.array() 
       });
       return;
@@ -161,9 +161,9 @@ router.get('/profile', (req: Request, res: Response, next: NextFunction) => {
 router.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   logger.error('Unhandled Error:', err.message);
   res.status(500).json({
-    status: 'error',
-    message: 'Internal server error',
-    error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    success: false,
+    error: 'Internal server error',
+    details: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
 

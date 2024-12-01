@@ -39,12 +39,18 @@ export const registerInitial = async (req: Request, res: Response, next: NextFun
 
     if (existingUser) {
       if (existingUser.email_verified) {
-        res.status(400).json({ error: 'User already exists and is verified.' });
+        res.status(400).json({ 
+          success: false,
+          error: 'User already exists and is verified.' 
+        });
         return;
       } else {
         // Resend OTP if user exists but not verified
         await resendOtpInternal(email);
-        res.status(200).json({ message: 'OTP has been resent to your email.' });
+        res.status(200).json({ 
+          success: true,
+          message: 'OTP has been resent to your email.' 
+        });
         return;
       }
     }
@@ -72,11 +78,16 @@ export const registerInitial = async (req: Request, res: Response, next: NextFun
     await sendOTPEmail(email, otpCode);
 
     res.status(200).json({
+      success: true,
       message: 'OTP has been sent to your email address.',
     });
   } catch (error: any) {
     logger.error('Initial Registration Error:', error.message);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error', 
+      details: error.message 
+    });
   }
 };
 
@@ -99,18 +110,27 @@ export const verifyOTP = async (req: Request, res: Response, next: NextFunction)
     }
 
     if (!session) {
-      res.status(400).json({ error: 'Invalid email or OTP.' });
+      res.status(400).json({ 
+        success: false,
+        error: 'Invalid email or OTP.' 
+      });
       return;
     }
 
     // Check if OTP is valid and not expired
     if (session.otp_code !== otp) {
-      res.status(400).json({ error: 'Invalid OTP.' });
+      res.status(400).json({ 
+        success: false,
+        error: 'Invalid OTP.' 
+      });
       return;
     }
 
     if (new Date(session.expires_at) < new Date()) {
-      res.status(400).json({ error: 'OTP has expired.' });
+      res.status(400).json({ 
+        success: false,
+        error: 'OTP has expired.' 
+      });
       return;
     }
 
@@ -125,11 +145,16 @@ export const verifyOTP = async (req: Request, res: Response, next: NextFunction)
     }
 
     res.status(200).json({
+      success: true,
       message: 'OTP verified successfully. Proceed to complete registration.',
     });
   } catch (error: any) {
     logger.error('OTP Verification Error:', error.message);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error', 
+      details: error.message 
+    });
   }
 };
 
@@ -142,11 +167,16 @@ export const resendOtp = async (req: Request, res: Response, next: NextFunction)
   try {
     await resendOtpInternal(email);
     res.status(200).json({
+      success: true,
       message: 'A new OTP has been sent to your email address.',
     });
   } catch (error: any) {
     logger.error('Resend OTP Error:', error.message);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error', 
+      details: error.message 
+    });
   }
 };
 
@@ -211,12 +241,18 @@ export const registerComplete = async (req: Request, res: Response, next: NextFu
     }
 
     if (!session) {
-      res.status(400).json({ error: 'No registration session found. Please initiate registration first.' });
+      res.status(400).json({ 
+        success: false,
+        error: 'No registration session found. Please initiate registration first.' 
+      });
       return;
     }
 
     if (!session.is_verified) {
-      res.status(400).json({ error: 'Email has not been verified. Please verify your email first.' });
+      res.status(400).json({ 
+        success: false,
+        error: 'Email has not been verified. Please verify your email first.' 
+      });
       return;
     }
 
@@ -232,7 +268,10 @@ export const registerComplete = async (req: Request, res: Response, next: NextFu
     }
 
     if (existingUser) {
-      res.status(400).json({ error: 'User already exists.' });
+      res.status(400).json({ 
+        success: false,
+        error: 'User already exists.' 
+      });
       return;
     }
 
@@ -269,11 +308,16 @@ export const registerComplete = async (req: Request, res: Response, next: NextFu
     }
 
     res.status(200).json({
+      success: true,
       message: 'Registration completed successfully.',
     });
   } catch (error: any) {
     logger.error('Complete Registration Error:', error.message);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error', 
+      details: error.message 
+    });
   }
 };
 
@@ -293,7 +337,10 @@ export const loginUser = async (req: Request, res: Response, next: NextFunction)
 
     if (error) {
       if (error.code === 'PGRST116') { // No rows found
-        res.status(400).json({ error: 'Invalid email or password.' });
+        res.status(400).json({ 
+          success: false,
+          error: 'Invalid email or password.' 
+        });
       } else {
         throw new Error('Error fetching user: ' + error.message);
       }
@@ -302,14 +349,20 @@ export const loginUser = async (req: Request, res: Response, next: NextFunction)
 
     // Check if email is verified
     if (!user.email_verified) {
-      res.status(400).json({ error: 'Please verify your email before logging in.' });
+      res.status(400).json({ 
+        success: false,
+        error: 'Please verify your email before logging in.' 
+      });
       return;
     }
 
     // Compare passwords
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      res.status(400).json({ error: 'Invalid email or password.' });
+      res.status(400).json({ 
+        success: false,
+        error: 'Invalid email or password.' 
+      });
       return;
     }
 
@@ -317,12 +370,17 @@ export const loginUser = async (req: Request, res: Response, next: NextFunction)
     const token = generateJWT(user.id);
 
     res.status(200).json({
+      success: true,
       message: 'Login successful.',
       token,
     });
   } catch (error: any) {
     logger.error('Login Error:', error.message);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error', 
+      details: error.message 
+    });
   }
 };
 
@@ -348,10 +406,15 @@ export const fetchUserProfile = async (req: Request, res: Response, next: NextFu
     const { password, ...userProfile } = user;
 
     res.status(200).json({
+      success: true,
       data: userProfile,
     });
   } catch (error: any) {
     logger.error('Fetch Profile Error:', error.message);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error', 
+      details: error.message 
+    });
   }
 };

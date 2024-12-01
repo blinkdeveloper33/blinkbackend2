@@ -29,10 +29,10 @@ export const scheduleCleanupExpiredSessions = () => {
   });
 };
 
-import { fetchAndStoreAccountBalances } from '../controllers/plaidController';
-
-
- export const scheduleBalanceSync = () => {
+/**
+ * Schedules a daily task to synchronize account balances.
+ */
+export const scheduleBalanceSync = () => {
   // Schedule to run every day at midnight
   cron.schedule('0 0 * * *', async () => {
     try {
@@ -64,3 +64,4 @@ import { fetchAndStoreAccountBalances } from '../controllers/plaidController';
   });
 };
 
+import { fetchAndStoreAccountBalances } from '../controllers/plaidController';

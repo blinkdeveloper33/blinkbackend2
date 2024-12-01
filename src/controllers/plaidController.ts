@@ -1,3 +1,5 @@
+// src/controllers/plaidController.ts
+
 import { 
   Configuration, 
   CountryCode, 
@@ -43,23 +45,14 @@ interface CustomAccountBalance extends AccountBalance {
   unofficial_currency_code: string | null;
 }
 
-interface CustomAccountBalance extends AccountBalance {
-  available: number | null;
-  current: number | null;
-  iso_currency_code: string | null;
-  limit: number | null;
-  unofficial_currency_code: string | null;
-}
-
 interface PlaidAccount extends Omit<AccountBase, 'balances' | 'type' | 'subtype'> {
   account_id: string;
   name: string;
-  type: AccountType; // Fix: Ensure compatibility by using AccountType
-  subtype: AccountSubtype | null; // Fix: Ensure compatibility by using AccountSubtype
+  type: AccountType; // Ensure compatibility by using AccountType
+  subtype: AccountSubtype | null; // Ensure compatibility by using AccountSubtype
   mask: string;
   balances: CustomAccountBalance; // Extend balances with CustomAccountBalance
 }
-
 
 interface Transaction {
   transaction_id: string;
@@ -102,12 +95,14 @@ export const generateSandboxPublicToken = async (req: Request, res: Response): P
     };
     const response = await plaidClient.sandboxPublicTokenCreate(tokenRequest);
     res.status(200).json({
+      success: true,
       public_token: response.data.public_token,
       request_id: response.data.request_id
     });
   } catch (error: any) {
     logger.error('Error generating sandbox public token:', error.response?.data || error.message);
     res.status(500).json({
+      success: false,
       error: 'Failed to generate sandbox public token',
       details: error.response?.data || error.message
     });
@@ -127,10 +122,14 @@ export const createLinkToken = async (req: Request, res: Response): Promise<void
       webhook: config.PLAID_WEBHOOK_URL,
     };
     const createTokenResponse = await plaidClient.linkTokenCreate(request);
-    res.json({ link_token: createTokenResponse.data.link_token });
+    res.status(200).json({ 
+      success: true,
+      link_token: createTokenResponse.data.link_token 
+    });
   } catch (error: any) {
     logger.error('Error creating link token:', error.response?.data || error.message);
     res.status(500).json({
+      success: false,
       error: 'Failed to create link token',
       details: error.response?.data || error.message
     });
@@ -177,7 +176,7 @@ export const exchangePublicToken = async (req: Request, res: Response): Promise<
       current_balance: account.current_balance,
       currency: account.currency,
     }));
-    res.json({
+    res.status(200).json({
       success: true,
       message: 'Bank accounts connected successfully',
       accounts: responseAccounts
@@ -185,6 +184,7 @@ export const exchangePublicToken = async (req: Request, res: Response): Promise<
   } catch (error: any) {
     logger.error(`Error exchanging public token: ${error.message}`);
     res.status(500).json({
+      success: false,
       error: 'Failed to exchange public token',
       details: error.response?.data || error.message
     });
@@ -269,7 +269,7 @@ export const transactionsSyncHandler = async (req: Request, res: Response): Prom
   const { userId } = req.body;
   try {
     const stats = await syncTransactionsForUser(userId);
-    res.json({
+    res.status(200).json({
       success: true,
       stats: {
         added: stats.added,
@@ -279,7 +279,11 @@ export const transactionsSyncHandler = async (req: Request, res: Response): Prom
     });
   } catch (error: any) {
     logger.error('Sync Error:', error.message);
-    res.status(500).json({ error: 'Failed to sync transactions', details: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to sync transactions', 
+      details: error.message 
+    });
   }
 };
 
@@ -327,10 +331,17 @@ export const syncBalancesHandler = async (req: Request, res: Response): Promise<
   const { userId } = req.body;
   try {
     await fetchAndStoreAccountBalances(userId);
-    res.json({ success: true, message: 'Account balances synchronized successfully' });
+    res.status(200).json({ 
+      success: true, 
+      message: 'Account balances synchronized successfully' 
+    });
   } catch (error: any) {
     logger.error('Balance Sync Error:', error.message);
-    res.status(500).json({ error: 'Failed to synchronize account balances', details: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to synchronize account balances', 
+      details: error.message 
+    });
   }
 };
 
@@ -349,7 +360,7 @@ export const getTransactions = async (req: Request, res: Response): Promise<void
       .order('date', { ascending: false })
       .range(offset, offset + limit - 1);
     if (error) throw new Error('Error fetching transactions: ' + error.message);
-    res.json({
+    res.status(200).json({
       success: true,
       page,
       limit,
@@ -357,6 +368,10 @@ export const getTransactions = async (req: Request, res: Response): Promise<void
     });
   } catch (error: any) {
     logger.error('Get Transactions Error:', error.message);
-    res.status(500).json({ error: 'Failed to retrieve transactions', details: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to retrieve transactions', 
+      details: error.message 
+    });
   }
 };

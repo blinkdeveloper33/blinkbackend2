@@ -15,7 +15,7 @@ import userRoutes from './routes/userRoutes';
 import logger from './services/logger';
 
 // Import Scheduler
-import { scheduleCleanupExpiredSessions } from './services/scheduler';
+import { scheduleCleanupExpiredSessions, scheduleBalanceSync } from './services/scheduler';
 
 const app: Application = express();
 
@@ -26,7 +26,10 @@ app.use(helmet());
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.',
+  message: {
+    success: false,
+    error: 'Too many requests from this IP, please try again later.'
+  },
   skip: (req: Request) => req.path === '/api/plaid/webhook', // Exclude webhook from rate limiting
 });
 app.use(limiter);
@@ -35,12 +38,8 @@ app.use(limiter);
 app.use(morgan('combined', { stream: { write: (message) => logger.info(message.trim()) } }));
 
 // CORS Configuration
-const corsOptions = {
-  origin: config.CORS_ORIGIN,
-  optionsSuccessStatus: 200,
-};
 app.use(cors({
-  origin: '*', // Allow all origins, or specify your Flutter app's URL
+  origin: config.CORS_ORIGIN, // Specify your Flutter app's URL or use '*' to allow all origins
 }));
 
 // Body Parser (Using built-in Express middleware)
@@ -53,7 +52,10 @@ app.use('/api/users', userRoutes);
 
 // Root Endpoint
 app.get('/', (req: Request, res: Response) => {
-  res.send('BlinkBackend2 is running');
+  res.status(200).json({ 
+    success: true,
+    message: 'BlinkBackend2 is running' 
+  });
 });
 
 // Global Error Handling Middleware
@@ -63,7 +65,10 @@ app.use(
       return next(err);
     }
     logger.error('Unhandled Error:', err.stack);
-    res.status(500).json({ error: 'Something went wrong!' });
+    res.status(500).json({ 
+      success: false,
+      error: 'Something went wrong!' 
+    });
   }
 );
 
@@ -73,6 +78,7 @@ app.listen(config.PORT, () => {
 
   // Start scheduled tasks
   scheduleCleanupExpiredSessions();
+  scheduleBalanceSync(); // Ensure to schedule balance synchronization if needed
 });
 
 export default app;

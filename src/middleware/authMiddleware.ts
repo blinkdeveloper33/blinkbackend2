@@ -19,25 +19,34 @@ const authMiddleware = (req: AuthenticatedRequest, res: Response, next: NextFunc
   const authHeader = req.headers['authorization'];
 
   if (!authHeader) {
-    res.status(401).json({ error: 'Authorization header missing.' });
+    res.status(401).json({ 
+      success: false,
+      error: 'Authorization header missing.' 
+    });
     return;
   }
 
   const token = authHeader.split(' ')[1]; // Expecting format: "Bearer <token>"
 
   if (!token) {
-    res.status(401).json({ error: 'Token missing.' });
+    res.status(401).json({ 
+      success: false,
+      error: 'Token missing.' 
+    });
     return;
   }
 
   jwt.verify(token, config.JWT_SECRET, (err, decoded: any) => {
     if (err) {
       logger.warn('Invalid JWT token:', err.message);
-      res.status(403).json({ error: 'Invalid token.' });
+      res.status(403).json({ 
+        success: false,
+        error: 'Invalid token.' 
+      });
       return;
     }
 
-    req.userId = decoded.userId;
+    req.userId = decoded.id; // Assuming payload contains { id: string }
     next();
   });
 };

@@ -29,7 +29,10 @@ const validate = (validations: ValidationChain[]) => {
 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      res.status(400).json({ errors: errors.array() });
+      res.status(400).json({ 
+          success: false,
+          errors: errors.array() 
+      });
       return;
     }
     next();
@@ -51,7 +54,10 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
 
     if (signature !== expectedSignature) {
       logger.warn('Invalid webhook signature');
-      res.status(400).json({ error: 'Invalid signature' });
+      res.status(400).json({ 
+        success: false,
+        error: 'Invalid signature' 
+      });
       return;
     }
 
@@ -71,7 +77,10 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
 
         if (bankError || !bankAccount) {
           logger.error(`Failed to find bank account for item_id: ${item_id}`, bankError?.message);
-          res.status(400).json({ error: 'User not found for the provided item_id' });
+          res.status(400).json({ 
+            success: false,
+            error: 'User not found for the provided item_id' 
+          });
           return;
         }
 
@@ -83,23 +92,39 @@ router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
           await fetchAndStoreAccountBalances(userId);
 
           logger.info(`Synchronization triggered for userId: ${userId}. Stats: Added=${stats.added}, Modified=${stats.modified}, Removed=${stats.removed}`);
-          res.status(200).send('Webhook received and synchronization triggered');
+          res.status(200).json({ 
+            success: true, 
+            message: 'Webhook received and synchronization triggered' 
+          });
         } catch (syncError: any) {
           logger.error(`Error synchronizing transactions for userId: ${userId}`, syncError.message);
-          res.status(500).json({ error: 'Failed to synchronize transactions', details: syncError.message });
+          res.status(500).json({ 
+            success: false, 
+            error: 'Failed to synchronize transactions', 
+            details: syncError.message 
+          });
         }
 
       } else {
         logger.info(`Unhandled TRANSACTIONS webhook_code: ${webhook_code}`);
-        res.status(200).send('Webhook received');
+        res.status(200).json({ 
+          success: true,
+          message: 'Webhook received' 
+        });
       }
     } else {
       logger.info(`Unhandled webhook_type: ${webhook_type}, webhook_code: ${webhook_code}`);
-      res.status(200).send('Webhook received');
+      res.status(200).json({ 
+        success: true,
+        message: 'Webhook received' 
+      });
     }
   } catch (error: any) {
     logger.error('Webhook Error:', error.message);
-    res.status(500).json({ error: 'Internal Server Error' });
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal Server Error' 
+    });
   }
 });
 

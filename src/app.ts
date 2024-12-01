@@ -39,7 +39,8 @@ app.use(morgan('combined', { stream: { write: (message) => logger.info(message.t
 
 // CORS Configuration
 app.use(cors({
-  origin: config.CORS_ORIGIN, // Specify your Flutter app's URL or use '*' to allow all origins
+  origin: '*',
+  credentials: true,
 }));
 
 // Body Parser (Using built-in Express middleware)

@@ -278,8 +278,8 @@ export const registerComplete = async (req: Request, res: Response, next: NextFu
     // Hash the password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create the user record and retrieve the inserted user's data
-    const { data: newUser, error: insertError } = await supabase
+    // Create the user record
+    const { error: insertError } = await supabase
       .from('users')
       .insert([
         {
@@ -291,12 +291,10 @@ export const registerComplete = async (req: Request, res: Response, next: NextFu
           zipcode,
           email_verified: true,
         }
-      ])
-      .select('id') // Select the 'id' of the inserted user
-      .single();
+      ]);
 
-    if (insertError || !newUser) {
-      throw new Error('Failed to create user: ' + (insertError?.message || 'Unknown error'));
+    if (insertError) {
+      throw new Error('Failed to create user: ' + insertError.message);
     }
 
     // Delete the registration session
@@ -309,10 +307,8 @@ export const registerComplete = async (req: Request, res: Response, next: NextFu
       throw new Error('Failed to delete registration session: ' + deleteError.message);
     }
 
-    // Respond with success and the user's ID
     res.status(200).json({
       success: true,
-      userId: newUser.id, // Include userId in the response
       message: 'Registration completed successfully.',
     });
   } catch (error: any) {
@@ -377,7 +373,7 @@ export const loginUser = async (req: Request, res: Response, next: NextFunction)
       success: true,
       message: 'Login successful.',
       token,
-      userId: user.id, // Optionally include userId if needed by frontend
+      userId: user.id, // Included userId for frontend
     });
   } catch (error: any) {
     logger.error('Login Error:', error.message);

@@ -22,6 +22,7 @@ interface Config {
   SMTP_PASS: string;
   SMTP_FROM_EMAIL: string;
   SMTP_FROM_NAME: string;
+  CLIENT_NAME: string; // Added for Plaid's client_name
 }
 
 const config: Config = {
@@ -42,6 +43,7 @@ const config: Config = {
   SMTP_PASS: process.env.SMTP_PASS as string,
   SMTP_FROM_EMAIL: process.env.SMTP_FROM_EMAIL as string,
   SMTP_FROM_NAME: process.env.SMTP_FROM_NAME as string,
+  CLIENT_NAME: process.env.CLIENT_NAME as string, // Added for Plaid's client_name
 };
 
 // Debugging: Log loaded environment variables (Avoid logging sensitive data in production)
@@ -62,6 +64,7 @@ if (process.env.NODE_ENV !== 'production') {
     SMTP_USER: config.SMTP_USER ? '✔️' : '❌',
     SMTP_FROM_EMAIL: config.SMTP_FROM_EMAIL ? '✔️' : '❌',
     SMTP_FROM_NAME: config.SMTP_FROM_NAME ? '✔️' : '❌',
+    CLIENT_NAME: config.CLIENT_NAME ? '✔️' : '❌', // Added for Plaid's client_name
   });
 }
 

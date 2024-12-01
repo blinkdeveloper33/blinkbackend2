@@ -1,3 +1,5 @@
+// src/types/types.ts
+
 /**
  * User Interface
  */
@@ -9,7 +11,7 @@ export interface User {
   last_name: string;
   state: string;
   zipcode: string;
-  email_verified: boolean; // New field
+  email_verified: boolean; // Indicates if the user's email is verified
   cursor?: string; // For transactions sync per user (if needed)
   created_at?: string;
 }
@@ -48,6 +50,7 @@ export interface BankAccount {
  */
 export interface Transaction {
   id: string;
+  user_id: string; // Associates the transaction with a user
   bank_account_id: string;
   transaction_id: string;
   amount: number;
@@ -55,7 +58,7 @@ export interface Transaction {
   description: string;
   original_description?: string | null;
   category: string;
-  category_detailed?: string | null; // Now allowed to be null
+  category_detailed?: string | null;
   merchant_name?: string | null;
   pending?: boolean;
   account_id: string;

@@ -55,9 +55,10 @@ interface PlaidAccount extends Omit<AccountBase, 'balances' | 'type' | 'subtype'
 }
 
 interface Transaction {
-  transaction_id: string;
+  id: string;
+  user_id: string; // Associates the transaction with a user
   bank_account_id: string;
-  account_id: string;
+  transaction_id: string;
   amount: number;
   date: string;
   description: string;
@@ -66,6 +67,7 @@ interface Transaction {
   category_detailed: string | null;
   merchant_name: string | null;
   pending: boolean;
+  account_id: string;
   created_at: string;
 }
 
@@ -115,7 +117,7 @@ export const createLinkToken = async (req: Request, res: Response): Promise<void
     const { userId } = req.body;
     const request = {
       user: { client_user_id: userId },
-      client_name: config.PLAID_CLIENT_ID || 'Your App Name',
+      client_name: config.CLIENT_NAME || 'Blink Finances', // Corrected client_name
       products: ['transactions' as Products],
       country_codes: ['US' as CountryCode],
       language: 'en',
@@ -168,6 +170,7 @@ export const exchangePublicToken = async (req: Request, res: Response): Promise<
     if (upsertError) throw upsertError;
     const responseAccounts = data.map((account: any) => ({
       id: account.id,
+      user_id: account.user_id, // Ensure user_id is included
       account_id: account.account_id,
       name: account.account_name,
       type: account.account_type,
@@ -220,6 +223,7 @@ export const syncTransactionsForUser = async (userId: string): Promise<{ added: 
         const { added, modified, removed, next_cursor, has_more } = syncResponse;
         const transactionsToUpsert: Partial<Transaction>[] = [...added, ...modified].map((txn: PlaidApiTransaction) => ({
           transaction_id: txn.transaction_id,
+          user_id: userId, // Associate transaction with user_id
           bank_account_id: account.id,
           account_id: txn.account_id,
           amount: txn.amount,
@@ -353,7 +357,7 @@ export const getTransactions = async (req: Request, res: Response): Promise<void
     const { data: transactions, error } = await supabase
       .from('transactions')
       .select('*')
-      .eq('user_id', userId)
+      .eq('user_id', userId) // Now possible due to user_id field
       .eq('bank_account_id', bankAccountId)
       .gte('date', startDate)
       .lte('date', endDate)

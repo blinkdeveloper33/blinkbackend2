@@ -4,8 +4,8 @@ import { Request, Response, NextFunction } from 'express';
 import supabase from '../services/supabaseService';
 import bcrypt from 'bcrypt';
 import logger from '../services/logger';
-import { sendOTPEmail } from '../services/emailService'; // Implement this service
-import { generateOTP } from '../utils/otpGenerator'; // Implement this utility
+import { sendOTPEmail } from '../services/emailService'; // Ensure this service is implemented
+import { generateOTP } from '../utils/otpGenerator'; // Ensure this utility is implemented
 import jwt from 'jsonwebtoken';
 import config from '../config';
 
@@ -278,8 +278,8 @@ export const registerComplete = async (req: Request, res: Response, next: NextFu
     // Hash the password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create the user record
-    const { error: insertError } = await supabase
+    // Create the user record and retrieve the inserted user's data
+    const { data: newUser, error: insertError } = await supabase
       .from('users')
       .insert([
         {
@@ -291,10 +291,12 @@ export const registerComplete = async (req: Request, res: Response, next: NextFu
           zipcode,
           email_verified: true,
         }
-      ]);
+      ])
+      .select('id') // Select the 'id' of the inserted user
+      .single();
 
-    if (insertError) {
-      throw new Error('Failed to create user: ' + insertError.message);
+    if (insertError || !newUser) {
+      throw new Error('Failed to create user: ' + (insertError?.message || 'Unknown error'));
     }
 
     // Delete the registration session
@@ -307,8 +309,10 @@ export const registerComplete = async (req: Request, res: Response, next: NextFu
       throw new Error('Failed to delete registration session: ' + deleteError.message);
     }
 
+    // Respond with success and the user's ID
     res.status(200).json({
       success: true,
+      userId: newUser.id, // Include userId in the response
       message: 'Registration completed successfully.',
     });
   } catch (error: any) {
@@ -373,6 +377,7 @@ export const loginUser = async (req: Request, res: Response, next: NextFunction)
       success: true,
       message: 'Login successful.',
       token,
+      userId: user.id, // Optionally include userId if needed by frontend
     });
   } catch (error: any) {
     logger.error('Login Error:', error.message);

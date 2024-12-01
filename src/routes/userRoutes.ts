@@ -1,5 +1,3 @@
-// src/routes/userRoutes.ts
-
 import express, { Request, Response, NextFunction, Router } from 'express';
 import { body, ValidationChain, validationResult } from 'express-validator';
 import {
@@ -25,9 +23,9 @@ const validate = (validations: ValidationChain[]) => {
 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      res.status(400).json({ 
-          success: false,
-          errors: errors.array() 
+      res.status(400).json({
+        success: false,
+        errors: errors.array(),
       });
       return;
     }
@@ -39,17 +37,11 @@ const validate = (validations: ValidationChain[]) => {
  * Input validation schemas
  */
 const initialRegistrationValidation: ValidationChain[] = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('A valid email address is required'),
+  body('email').isEmail().normalizeEmail().withMessage('A valid email address is required'),
 ];
 
 const verifyOtpValidation: ValidationChain[] = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('A valid email address is required'),
+  body('email').isEmail().normalizeEmail().withMessage('A valid email address is required'),
   body('otp')
     .isLength({ min: 6, max: 6 })
     .withMessage('OTP must be a 6-digit code')
@@ -58,17 +50,11 @@ const verifyOtpValidation: ValidationChain[] = [
 ];
 
 const resendOtpValidation: ValidationChain[] = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('A valid email address is required'),
+  body('email').isEmail().normalizeEmail().withMessage('A valid email address is required'),
 ];
 
 const completeRegistrationValidation: ValidationChain[] = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('A valid email address is required'),
+  body('email').isEmail().normalizeEmail().withMessage('A valid email address is required'),
   body('password')
     .isLength({ min: 8 })
     .withMessage('Password must be at least 8 characters long')
@@ -80,70 +66,25 @@ const completeRegistrationValidation: ValidationChain[] = [
     .withMessage('Password must contain at least one number')
     .matches(/[!@#$%^&*(),.?":{}|<>]/)
     .withMessage('Password must contain at least one special character'),
-  body('first_name')
-    .trim()
-    .notEmpty()
-    .withMessage('First name is required'),
-  body('last_name')
-    .trim()
-    .notEmpty()
-    .withMessage('Last name is required'),
-  body('state')
-    .trim()
-    .notEmpty()
-    .withMessage('State is required')
-    .isLength({ min: 2, max: 2 })
-    .withMessage('State must be a valid 2-letter US state code')
-    .isUppercase()
-    .withMessage('State code must be uppercase'),
-  body('zipcode')
-    .trim()
-    .isPostalCode('US')
-    .withMessage('A valid US ZIP code is required'),
+  body('first_name').trim().notEmpty().withMessage('First name is required'),
+  body('last_name').trim().notEmpty().withMessage('Last name is required'),
+  body('state').trim().notEmpty().withMessage('State is required'),
+  body('zipcode').trim().isPostalCode('US').withMessage('A valid US ZIP code is required'),
 ];
 
 const loginValidation: ValidationChain[] = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('A valid email address is required'),
-  body('password')
-    .notEmpty()
-    .withMessage('Password is required'),
+  body('email').isEmail().normalizeEmail().withMessage('A valid email address is required'),
+  body('password').notEmpty().withMessage('Password is required'),
 ];
 
 /**
  * Public routes
  */
-router.post(
-  '/register-initial',
-  validate(initialRegistrationValidation),
-  registerInitial
-);
-
-router.post(
-  '/verify-otp',
-  validate(verifyOtpValidation),
-  verifyOTP
-);
-
-router.post(
-  '/resend-otp',
-  validate(resendOtpValidation),
-  resendOtp
-);
-
-router.post(
-  '/register-complete',
-  validate(completeRegistrationValidation),
-  registerComplete
-);
-
-router.post(
-  '/login',
-  validate(loginValidation),
-  loginUser
-);
+router.post('/register-initial', validate(initialRegistrationValidation), registerInitial);
+router.post('/verify-otp', validate(verifyOtpValidation), verifyOTP);
+router.post('/resend-otp', validate(resendOtpValidation), resendOtp);
+router.post('/register-complete', validate(completeRegistrationValidation), registerComplete);
+router.post('/login', validate(loginValidation), loginUser);
 
 /**
  * Protected routes
@@ -163,7 +104,7 @@ router.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   res.status(500).json({
     success: false,
     error: 'Internal server error',
-    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    details: process.env.NODE_ENV === 'development' ? err.message : undefined,
   });
 });
 

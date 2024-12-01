@@ -40,7 +40,7 @@ app.use(morgan('combined', { stream: { write: (message) => logger.info(message.t
 // CORS Configuration
 app.use(cors({
   origin: '*',
-  credentials: true,
+  credentials: false,
 }));
 
 // Body Parser (Using built-in Express middleware)

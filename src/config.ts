@@ -1,4 +1,4 @@
-// src/config.ts
+// src/config.ts ⭐️⭐️⭐️
 
 import dotenv from 'dotenv';
 

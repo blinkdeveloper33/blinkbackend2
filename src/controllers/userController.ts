@@ -1,13 +1,14 @@
-// src/controllers/userController.ts
+// src/controllers/userController.ts ⭐️⭐️⭐️
 
 import { Request, Response, NextFunction } from 'express';
 import supabase from '../services/supabaseService';
 import bcrypt from 'bcrypt';
 import logger from '../services/logger';
-import { sendOTPEmail } from '../services/emailService'; // Ensure this service is implemented
-import { generateOTP } from '../utils/otpGenerator'; // Ensure this utility is implemented
+import { sendOTPEmail } from '../services/emailService';
+import { generateOTP } from '../utils/otpGenerator';
 import jwt from 'jsonwebtoken';
 import config from '../config';
+import { User, RegistrationSession } from '../types/types';
 
 /**
  * Generates a JWT token for the user.
@@ -29,11 +30,11 @@ export const registerInitial = async (req: Request, res: Response, next: NextFun
     // Check if user already exists
     const { data: existingUser, error: userError } = await supabase
       .from('users')
-      .select('*')
+      .select('id, email_verified')
       .eq('email', email)
       .single();
 
-    if (userError && userError.code !== 'PGRST116') { // PGRST116: No rows found
+    if (userError && userError.code !== 'PGRST116') { // PGRST116: Row not found
       throw new Error('Error checking existing user: ' + userError.message);
     }
 
@@ -389,18 +390,16 @@ export const loginUser = async (req: Request, res: Response, next: NextFunction)
  * Fetches the authenticated user's profile information.
  */
 export const fetchUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-  // Assuming authMiddleware has set req.userId
-  const userId = (req as any).userId;
+  // Assuming authMiddleware has set req.user
+  const user = (req as any).user;
 
   try {
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .single();
-
-    if (error) {
-      throw new Error('Error fetching user profile: ' + error.message);
+    if (!user) {
+      res.status(401).json({ 
+        success: false,
+        error: 'Unauthorized: User not found.' 
+      });
+      return;
     }
 
     // Exclude sensitive fields like password
@@ -412,10 +411,10 @@ export const fetchUserProfile = async (req: Request, res: Response, next: NextFu
     });
   } catch (error: any) {
     logger.error('Fetch Profile Error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Internal server error', 
-      details: error.message 
+      error: 'Internal server error',
+      details: error.message,
     });
   }
 };

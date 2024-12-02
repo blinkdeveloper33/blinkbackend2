@@ -1,27 +1,34 @@
-// src/middleware/authMiddleware.ts
+// src/middleware/authMiddleware.ts ⭐️⭐️⭐️
 
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import config from '../config';
+import supabase from '../services/supabaseService';
 import logger from '../services/logger';
 
 /**
  * Interface for authenticated requests
  */
 export interface AuthenticatedRequest extends Request {
-  userId?: string;
+  user?: {
+    id: string;
+    email: string;
+    first_name: string;
+    last_name: string;
+    // Add other user properties as needed
+  };
 }
 
 /**
  * Authentication Middleware
  */
-const authMiddleware = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+const authMiddleware = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers['authorization'];
 
-  if (!authHeader) {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
     res.status(401).json({ 
       success: false,
-      error: 'Authorization header missing.' 
+      error: 'Unauthorized: No token provided.' 
     });
     return;
   }
@@ -31,24 +38,39 @@ const authMiddleware = (req: AuthenticatedRequest, res: Response, next: NextFunc
   if (!token) {
     res.status(401).json({ 
       success: false,
-      error: 'Token missing.' 
+      error: 'Unauthorized: Token missing.' 
     });
     return;
   }
 
-  jwt.verify(token, config.JWT_SECRET, (err, decoded: any) => {
-    if (err) {
-      logger.warn('Invalid JWT token:', err.message);
-      res.status(403).json({ 
+  try {
+    const decoded = jwt.verify(token, config.JWT_SECRET) as { userId: string };
+
+    // Fetch user from Supabase
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, email, first_name, last_name') // Select necessary fields
+      .eq('id', decoded.userId)
+      .single();
+
+    if (error || !user) {
+      res.status(401).json({ 
         success: false,
-        error: 'Invalid token.' 
+        error: 'Unauthorized: User not found.' 
       });
       return;
     }
 
-    req.userId = decoded.id; // Assuming payload contains { id: string }
+    // Attach user to the request object
+    req.user = user;
     next();
-  });
+  } catch (err: any) {
+    logger.warn('Invalid JWT token:', err.message);
+    res.status(403).json({ 
+      success: false,
+      error: 'Forbidden: Invalid token.' 
+    });
+  }
 };
 
 export default authMiddleware;

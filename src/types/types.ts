@@ -1,4 +1,6 @@
-// src/types/types.ts
+// src/types/types.ts ⭐️⭐️⭐️
+
+import { AccountBase, AccountBalance, Transaction as PlaidApiTransaction, RemovedTransaction, AccountType, AccountSubtype, TransactionsSyncRequest as PlaidTransactionsSyncRequest } from 'plaid';
 
 /**
  * User Interface
@@ -66,6 +68,17 @@ export interface Transaction {
 }
 
 /**
+ * RegistrationSession Interface
+ */
+export interface RegistrationSession {
+  email: string;
+  otp_code: string;
+  expires_at: string; // ISO string
+  is_verified: boolean;
+  created_at: string;
+}
+
+/**
  * Database Interface for Supabase
  */
 export interface Database {
@@ -75,6 +88,11 @@ export interface Database {
         Row: User;
         Insert: Partial<User>;
         Update: Partial<User>;
+      };
+      user_otps: {
+        Row: UserOTP;
+        Insert: Partial<UserOTP>;
+        Update: Partial<UserOTP>;
       };
       bank_accounts: {
         Row: BankAccount;
@@ -86,12 +104,78 @@ export interface Database {
         Insert: Partial<Transaction>;
         Update: Partial<Transaction>;
       };
-      user_otps: {
-        Row: UserOTP;
-        Insert: Partial<UserOTP>;
-        Update: Partial<UserOTP>;
+      registration_sessions: {
+        Row: RegistrationSession;
+        Insert: Partial<RegistrationSession>;
+        Update: Partial<RegistrationSession>;
+      };
+      sessions: { // Added if using sessions
+        Row: {
+          id: string;
+          user_id: string;
+          token: string;
+          expires_at: string;
+          created_at: string;
+        };
+        Insert: Partial<{
+          id: string;
+          user_id: string;
+          token: string;
+          expires_at: string;
+          created_at: string;
+        }>;
+        Update: Partial<{
+          user_id: string;
+          token: string;
+          expires_at: string;
+          created_at: string;
+        }>;
       };
       // Define other tables here
     };
   };
+}
+
+/**
+ * CustomAccountBalance Interface
+ */
+export interface CustomAccountBalance extends AccountBalance {
+  available: number | null;
+  current: number | null;
+  iso_currency_code: string | null;
+  limit: number | null;
+  unofficial_currency_code: string | null;
+}
+
+/**
+ * PlaidAccount Interface
+ */
+export interface PlaidAccount extends Omit<AccountBase, 'balances' | 'type' | 'subtype'> {
+  account_id: string;
+  name: string;
+  type: AccountType;
+  subtype: AccountSubtype | null;
+  mask: string;
+  balances: CustomAccountBalance;
+}
+
+/**
+ * TransactionsSyncRequest Interface
+ */
+export interface TransactionsSyncRequest extends PlaidTransactionsSyncRequest {
+  options: {
+    include_personal_finance_category: boolean;
+    include_original_description: boolean;
+  };
+}
+
+/**
+ * CustomTransactionsSyncResponse Interface
+ */
+export interface CustomTransactionsSyncResponse {
+  added: PlaidApiTransaction[];
+  modified: PlaidApiTransaction[];
+  removed: RemovedTransaction[];
+  next_cursor: string;
+  has_more: boolean;
 }

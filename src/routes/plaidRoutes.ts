@@ -1,4 +1,4 @@
-// src/routes/plaidRoutes.ts
+// src/routes/plaidRoutes.ts ⭐️⭐️⭐️
 
 import express, { Request, Response, NextFunction, Router } from 'express';
 import { body, ValidationChain, validationResult } from 'express-validator';
@@ -8,15 +8,11 @@ import {
   getTransactions,
   transactionsSyncHandler,
   generateSandboxPublicToken,
-  syncTransactionsForUser,
   syncBalancesHandler,
-  fetchAndStoreAccountBalances
+  handleWebhook
 } from '../controllers/plaidController';
 import authMiddleware from '../middleware/authMiddleware';
-import logger from '../services/logger';
-import supabase from '../services/supabaseService';
-import crypto from 'crypto';
-import config from '../config';
+import rateLimit from 'express-rate-limit';
 
 const router: Router = express.Router();
 
@@ -40,93 +36,22 @@ const validate = (validations: ValidationChain[]) => {
 };
 
 /**
+ * Rate limiter for webhook endpoint
+ */
+const webhookLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: {
+    success: false,
+    error: 'Too many requests, please try again later.'
+  }
+});
+
+/**
  * Webhook handler
  * No authentication, as it's from Plaid
  */
-router.post('/webhook', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const signature = req.headers['x-plaid-signature'] as string;
-    const payload = JSON.stringify(req.body);
-    const expectedSignature = crypto
-      .createHmac('sha256', config.PLAID_WEBHOOK_SECRET)
-      .update(payload)
-      .digest('hex');
-
-    if (signature !== expectedSignature) {
-      logger.warn('Invalid webhook signature');
-      res.status(400).json({ 
-        success: false,
-        error: 'Invalid signature' 
-      });
-      return;
-    }
-
-    const { webhook_type, webhook_code, item_id } = req.body;
-
-    logger.info(`Received webhook: Type=${webhook_type}, Code=${webhook_code}, Item ID=${item_id}`);
-
-    // Handle specific webhook events
-    if (webhook_type === 'TRANSACTIONS') {
-      if (['SYNC_UPDATES_AVAILABLE', 'RECURRING_TRANSACTIONS_UPDATE'].includes(webhook_code)) {
-        // Find the user_id associated with the item_id
-        const { data: bankAccount, error: bankError } = await supabase
-          .from('bank_accounts')
-          .select('user_id')
-          .eq('plaid_item_id', item_id)
-          .single();
-
-        if (bankError || !bankAccount) {
-          logger.error(`Failed to find bank account for item_id: ${item_id}`, bankError?.message);
-          res.status(400).json({ 
-            success: false,
-            error: 'User not found for the provided item_id' 
-          });
-          return;
-        }
-
-        const userId = bankAccount.user_id;
-
-        try {
-          const stats = await syncTransactionsForUser(userId);
-          // Also fetch and store balances
-          await fetchAndStoreAccountBalances(userId);
-
-          logger.info(`Synchronization triggered for userId: ${userId}. Stats: Added=${stats.added}, Modified=${stats.modified}, Removed=${stats.removed}`);
-          res.status(200).json({ 
-            success: true, 
-            message: 'Webhook received and synchronization triggered' 
-          });
-        } catch (syncError: any) {
-          logger.error(`Error synchronizing transactions for userId: ${userId}`, syncError.message);
-          res.status(500).json({ 
-            success: false, 
-            error: 'Failed to synchronize transactions', 
-            details: syncError.message 
-          });
-        }
-
-      } else {
-        logger.info(`Unhandled TRANSACTIONS webhook_code: ${webhook_code}`);
-        res.status(200).json({ 
-          success: true,
-          message: 'Webhook received' 
-        });
-      }
-    } else {
-      logger.info(`Unhandled webhook_type: ${webhook_type}, webhook_code: ${webhook_code}`);
-      res.status(200).json({ 
-        success: true,
-        message: 'Webhook received' 
-      });
-    }
-  } catch (error: any) {
-    logger.error('Webhook Error:', error.message);
-    res.status(500).json({ 
-      success: false,
-      error: 'Internal Server Error' 
-    });
-  }
-});
+router.post('/webhook', webhookLimiter, handleWebhook);
 
 // Apply authentication middleware for all routes below
 router.use(authMiddleware);
@@ -196,7 +121,15 @@ router.post(
           throw new Error('End Date must be after Start Date');
         }
         return true;
-      })
+      }),
+    body('page')
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage('Page must be a positive integer'),
+    body('limit')
+      .optional()
+      .isInt({ min: 1, max: 100 })
+      .withMessage('Limit must be a positive integer and not exceed 100')
   ]),
   getTransactions
 );

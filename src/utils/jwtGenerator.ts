@@ -1,4 +1,4 @@
-// src/utils/jwtGenerator.ts
+// src/utils/jwtGenerator.ts ⭐️⭐️⭐️
 
 import jwt from 'jsonwebtoken';
 import config from '../config';

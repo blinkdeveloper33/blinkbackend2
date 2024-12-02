@@ -1,8 +1,12 @@
-// src/services/logger.ts
+// src/services/logger.ts ⭐️⭐️⭐️
 
 import { createLogger, format, transports } from 'winston';
 import config from '../config';
 
+/**
+ * Initialize the logger using Winston.
+ * Logs are written to files and, in non-production environments, to the console.
+ */
 const logger = createLogger({
   level: config.LOG_LEVEL || 'info', // Dynamic log level based on environment
   format: format.combine(

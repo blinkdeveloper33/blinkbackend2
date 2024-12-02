@@ -1,9 +1,14 @@
-// src/services/emailService.ts
+// src/services/emailService.ts ⭐️⭐️⭐️
 
 import nodemailer from 'nodemailer';
 import config from '../config';
 import logger from './logger';
 
+/**
+ * Sends an OTP email to the specified recipient.
+ * @param to - Recipient's email address.
+ * @param otp - One-Time Password to send.
+ */
 export const sendOTPEmail = async (to: string, otp: string): Promise<void> => {
   try {
     const transporter = nodemailer.createTransport({

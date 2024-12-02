@@ -1,4 +1,4 @@
-// src/app.ts
+// src/app.ts ⭐️⭐️⭐️
 
 import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
@@ -40,7 +40,7 @@ app.use(morgan('combined', { stream: { write: (message) => logger.info(message.t
 // CORS Configuration
 app.use(cors({
   origin: '*',
-  credentials: false,
+  credentials: false
 }));
 
 // Body Parser (Using built-in Express middleware)
@@ -57,6 +57,16 @@ app.get('/', (req: Request, res: Response) => {
     success: true,
     message: 'BlinkBackend2 is running' 
   });
+});
+
+// Health Check Endpoint
+app.get('/api/health', (req: Request, res: Response) => {
+  res.status(200).json({ success: true, message: 'Server is healthy' });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ success: false, error: 'Endpoint not found' });
 });
 
 // Global Error Handling Middleware

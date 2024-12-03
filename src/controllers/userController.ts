@@ -418,3 +418,55 @@ export const fetchUserProfile = async (req: Request, res: Response, next: NextFu
     });
   }
 };
+
+/**
+ * Checks if a user has a connected bank account.
+ * @param req - Express Request object
+ * @param res - Express Response object
+ */
+export const getUserStatus = async (req: Request, res: Response): Promise<void> => {
+  const { userId } = req.params;
+
+  try {
+    // Check if the user exists
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', userId)
+      .single();
+
+    if (userError) {
+      res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+      return;
+    }
+
+    // Check if the user has any connected bank accounts
+    const { data: bankAccounts, error: bankError } = await supabase
+      .from('bank_accounts')
+      .select('id')
+      .eq('user_id', userId)
+      .limit(1);
+
+    if (bankError) {
+      throw new Error('Error checking bank accounts: ' + bankError.message);
+    }
+
+    const hasBankAccount = bankAccounts && bankAccounts.length > 0;
+
+    res.status(200).json({
+      success: true,
+      hasBankAccount
+    });
+  } catch (error: any) {
+    logger.error('Get User Status Error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: error.message
+    });
+  }
+};
+

@@ -9,6 +9,7 @@ import {
   registerComplete,
   loginUser,
   fetchUserProfile,
+  getUserStatus,
 } from '../controllers/userController';
 import authMiddleware from '../middleware/authMiddleware';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
@@ -151,6 +152,10 @@ router.get('/profile', (req: Request, res: Response, next: NextFunction) => {
   fetchUserProfile(authReq, res, next);
 });
 
+router.get('/status/:userId', authMiddleware, (req: Request, res: Response) => {
+  getUserStatus(req, res);
+});
+
 /**
  * Error handling middleware
  */
@@ -164,3 +169,4 @@ router.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 });
 
 export default router;
+

@@ -1,4 +1,4 @@
-// src/routes/plaidRoutes.ts ⭐️⭐️⭐️
+// src/routes/plaidRoutes.ts
 
 import express, { Request, Response, NextFunction, Router } from 'express';
 import { body, ValidationChain, validationResult } from 'express-validator';
@@ -9,7 +9,9 @@ import {
   transactionsSyncHandler,
   generateSandboxPublicToken,
   syncBalancesHandler,
-  handleWebhook
+  handleWebhook,
+  getRecentTransactions,
+  getCurrentBalances
 } from '../controllers/plaidController';
 import authMiddleware from '../middleware/authMiddleware';
 import rateLimit from 'express-rate-limit';
@@ -169,4 +171,27 @@ router.post(
   syncBalancesHandler
 );
 
+/**
+ * Get recent transactions endpoint
+ */
+router.get(
+  '/recent-transactions/:userId',
+  authMiddleware,
+  (req: Request, res: Response, next: NextFunction) => {
+    getRecentTransactions(req, res);
+  }
+);
+
+/**
+ * Get current balances endpoint
+ */
+router.get(
+  '/current-balances',
+  authMiddleware,
+  (req: Request, res: Response, next: NextFunction) => {
+    getCurrentBalances(req, res);
+  }
+);
+
 export default router;
+

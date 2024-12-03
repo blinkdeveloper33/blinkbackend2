@@ -479,15 +479,21 @@ export const getTransactions = async (req: Request, res: Response): Promise<void
     const limit = parseInt(req.body.limit) || 50;
     const offset = (page - 1) * limit;
 
-    const { data: transactions, error } = await supabase
+    let query = supabase
       .from('transactions')
       .select('*')
       .eq('user_id', userId)
-      .eq('bank_account_id', bankAccountId)
       .gte('date', startDate)
       .lte('date', endDate)
       .order('date', { ascending: false })
       .range(offset, offset + limit - 1);
+
+    // If bankAccountId is not 'all', filter by the specific bank account
+    if (bankAccountId !== 'all') {
+      query = query.eq('bank_account_id', bankAccountId);
+    }
+
+    const { data: transactions, error } = await query;
 
     if (error) throw new Error('Error fetching transactions: ' + error.message);
     res.status(200).json({
@@ -501,6 +507,118 @@ export const getTransactions = async (req: Request, res: Response): Promise<void
     res.status(500).json({ 
       success: false, 
       error: 'Failed to retrieve transactions', 
+      details: error.message 
+    });
+  }
+};
+
+/**
+ * Get the last 5 transactions for a user
+ * @param req - Express Request object
+ * @param res - Express Response object
+ */
+export const getRecentTransactions = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.params;
+
+    const { data: transactions, error } = await supabase
+      .from('transactions')
+      .select(`
+        id,
+        bank_account_id,
+        transaction_id,
+        amount,
+        date,
+        description,
+        original_description,
+        category,
+        category_detailed,
+        merchant_name,
+        pending,
+        created_at,
+        account_id,
+        user_id
+      `)
+      .eq('user_id', userId)
+      .order('date', { ascending: false })
+      .limit(5);
+
+    if (error) throw new Error('Error fetching recent transactions: ' + error.message);
+
+    // Ensure all fields are properly formatted
+    const formattedTransactions = transactions.map((t: any) => ({
+      ...t,
+      amount: Number(t.amount),
+      date: t.date || null,
+      description: t.description || '',
+      original_description: t.original_description || '',
+      category: t.category || '',
+      category_detailed: t.category_detailed || '',
+      merchant_name: t.merchant_name || '',
+      pending: Boolean(t.pending),
+      created_at: t.created_at || null,
+    }));
+
+    res.status(200).json({
+      success: true,
+      transactions: formattedTransactions,
+    });
+  } catch (error: any) {
+    logger.error('Get Recent Transactions Error:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to retrieve recent transactions', 
+      details: error.message 
+    });
+  }
+};
+
+/**
+ * Get current balances for all bank accounts of the authenticated user
+ * @param req - Express Request object
+ * @param res - Express Response object
+ */
+export const getCurrentBalances = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user.id; // Assuming the user ID is attached to the request by the auth middleware
+
+    const { data: bankAccounts, error } = await supabase
+      .from('bank_accounts')
+      .select('id, account_name, current_balance, available_balance, currency')
+      .eq('user_id', userId);
+
+    if (error) throw new Error('Error fetching bank accounts: ' + error.message);
+
+    if (!bankAccounts || bankAccounts.length === 0) {
+      res.status(200).json({
+        success: true,
+        message: 'No bank accounts found for the user',
+        totalBalance: 0,
+        accounts: []
+      });
+      return;
+    }
+
+    const accounts = bankAccounts.map(account => ({
+      id: account.id,
+      name: account.account_name,
+      currentBalance: account.current_balance,
+      availableBalance: account.available_balance,
+      currency: account.currency
+    }));
+
+    const totalBalance = accounts.reduce((sum, account) => sum + account.currentBalance, 0);
+
+    res.status(200).json({
+      success: true,
+      totalBalance,
+      accounts
+    });
+  } catch (error: any) {
+    logger.error('Get Current Balances Error:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to retrieve current balances', 
       details: error.message 
     });
   }

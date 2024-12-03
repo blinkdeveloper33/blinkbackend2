@@ -44,14 +44,19 @@ const authMiddleware = async (req: AuthenticatedRequest, res: Response, next: Ne
   }
 
   try {
-    const decoded = jwt.verify(token, config.JWT_SECRET) as { userId: string };
+    // Adjust the expected payload to match the JWT generation
+    const decoded = jwt.verify(token, config.JWT_SECRET) as { id: string };
 
-    // Fetch user from Supabase
+    console.log('Decoded JWT:', decoded); // Debugging: Log decoded JWT
+
+    // Fetch user from Supabase using the correct ID
     const { data: user, error } = await supabase
       .from('users')
       .select('id, email, first_name, last_name') // Select necessary fields
-      .eq('id', decoded.userId)
+      .eq('id', decoded.id) // Use 'id' instead of 'userId'
       .single();
+
+    console.log('Supabase query result:', user, error); // Debugging: Log query result
 
     if (error || !user) {
       res.status(401).json({ 

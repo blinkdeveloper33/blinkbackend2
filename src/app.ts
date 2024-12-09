@@ -1,4 +1,4 @@
-// src/app.ts ⭐️⭐️⭐️
+// src/app.ts
 
 import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
@@ -10,6 +10,7 @@ import config from './config';
 // Import Routes
 import plaidRoutes from './routes/plaidRoutes';
 import userRoutes from './routes/userRoutes';
+import blinkAdvanceRoutes from './routes/blinkAdvanceRoutes'; // Import BlinkAdvance routes
 
 // Import Logger
 import logger from './services/logger';
@@ -50,6 +51,7 @@ app.use(express.urlencoded({ extended: true }));
 // Routes
 app.use('/api/plaid', plaidRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/blink-advances', blinkAdvanceRoutes); // Use BlinkAdvance routes
 
 // Root Endpoint
 app.get('/', (req: Request, res: Response) => {

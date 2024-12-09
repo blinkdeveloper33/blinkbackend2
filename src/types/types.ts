@@ -1,6 +1,14 @@
 // src/types/types.ts ⭐️⭐️⭐️
 
-import { AccountBase, AccountBalance, Transaction as PlaidApiTransaction, RemovedTransaction, AccountType, AccountSubtype, TransactionsSyncRequest as PlaidTransactionsSyncRequest } from 'plaid';
+import { 
+  AccountBase, 
+  AccountBalance, 
+  Transaction as PlaidApiTransaction, 
+  RemovedTransaction, 
+  AccountType, 
+  AccountSubtype, 
+  TransactionsSyncRequest as PlaidTransactionsSyncRequest 
+} from 'plaid';
 
 /**
  * User Interface
@@ -45,6 +53,9 @@ export interface BankAccount {
   account_mask: string;
   cursor?: string; // For transactions sync per account
   created_at?: string;
+  available_balance: number;
+  current_balance: number;
+  currency: string;
 }
 
 /**
@@ -76,6 +87,22 @@ export interface RegistrationSession {
   expires_at: string; // ISO string
   is_verified: boolean;
   created_at: string;
+}
+
+/**
+ * BlinkAdvance Interface
+ */
+export interface BlinkAdvance {
+  id: string;
+  user_id: string;
+  bank_account_id: string;
+  requested_amount: number;
+  transfer_speed: 'Instant' | 'Normal';
+  fee: number;
+  repay_date: string; // 'YYYY-MM-DD'
+  status: 'requested' | 'approved' | 'funded' | 'repaid' | 'canceled';
+  created_at: string;
+  updated_at?: string | null;
 }
 
 /**
@@ -130,6 +157,11 @@ export interface Database {
           expires_at: string;
           created_at: string;
         }>;
+      };
+      blink_advances: { // Newly added BlinkAdvance table
+        Row: BlinkAdvance;
+        Insert: Partial<BlinkAdvance>;
+        Update: Partial<BlinkAdvance>;
       };
       // Define other tables here
     };

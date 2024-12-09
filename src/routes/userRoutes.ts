@@ -10,6 +10,7 @@ import {
   loginUser,
   fetchUserProfile,
   getUserStatus,
+  getUserBankAccounts, // Import the new controller function
 } from '../controllers/userController';
 import authMiddleware from '../middleware/authMiddleware';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
@@ -28,7 +29,7 @@ const validate = (validations: ValidationChain[]) => {
     if (!errors.isEmpty()) {
       res.status(400).json({
         success: false,
-        errors: errors.array()
+        errors: errors.array(),
       });
       return;
     }
@@ -152,9 +153,20 @@ router.get('/profile', (req: Request, res: Response, next: NextFunction) => {
   fetchUserProfile(authReq, res, next);
 });
 
-router.get('/status/:userId', authMiddleware, (req: Request, res: Response) => {
+router.get('/status/:userId', (req: Request, res: Response) => {
   getUserStatus(req, res);
 });
+
+/**
+ * New Route: Get User Bank Accounts
+ * GET /api/users/bank-accounts
+ */
+router.get(
+  '/bank-accounts',
+  async (req: Request, res: Response, next: NextFunction) => {
+    await getUserBankAccounts(req, res);
+  }
+);
 
 /**
  * Error handling middleware
@@ -164,9 +176,8 @@ router.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   res.status(500).json({
     success: false,
     error: 'Internal server error',
-    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    details: process.env.NODE_ENV === 'development' ? err.message : undefined,
   });
 });
 
 export default router;
-

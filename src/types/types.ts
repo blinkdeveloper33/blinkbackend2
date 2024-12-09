@@ -106,6 +106,17 @@ export interface BlinkAdvance {
 }
 
 /**
+ * BankAccountSummary Interface
+ * Used for selecting specific fields from the bank_accounts table
+ */
+export interface BankAccountSummary {
+  id: string;
+  account_name: string;
+  account_type: string;
+  currency: string;
+}
+
+/**
  * Database Interface for Supabase
  */
 export interface Database {

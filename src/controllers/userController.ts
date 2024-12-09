@@ -8,7 +8,7 @@ import { sendOTPEmail } from '../services/emailService';
 import { generateOTP } from '../utils/otpGenerator';
 import jwt from 'jsonwebtoken';
 import config from '../config';
-import { User, RegistrationSession } from '../types/types';
+import { User, RegistrationSession, BankAccount, BankAccountSummary } from '../types/types';
 
 /**
  * Generates a JWT token for the user.
@@ -470,3 +470,61 @@ export const getUserStatus = async (req: Request, res: Response): Promise<void> 
   }
 };
 
+/**
+ * Retrieves all bank account IDs for the authenticated user.
+ */
+export const getUserBankAccounts = async (req: Request, res: Response): Promise<void> => {
+  // Assuming authMiddleware sets req.user
+  const user = (req as any).user;
+
+  if (!user) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User information not found.',
+    });
+    return;
+  }
+
+  try {
+    // Fetch bank accounts associated with the user
+    const { data: bankAccounts, error } = await supabase
+      .from('bank_accounts')
+      .select('id, account_name, account_type, currency')
+      .eq('user_id', user.id);
+
+    if (error) {
+      throw new Error('Error fetching bank accounts: ' + error.message);
+    }
+
+    if (!bankAccounts) {
+      res.status(200).json({
+        success: true,
+        bankAccounts: []
+      });
+      return;
+    }
+
+    // Cast the data as BankAccountSummary[]
+    const bankAccountsSummary = bankAccounts as BankAccountSummary[];
+
+    // Format the response to include only necessary fields
+    const formattedAccounts = bankAccountsSummary.map((account) => ({
+      bankAccountId: account.id,
+      accountName: account.account_name,
+      accountType: account.account_type,
+      currency: account.currency,
+    }));
+
+    res.status(200).json({
+      success: true,
+      bankAccounts: formattedAccounts,
+    });
+  } catch (error: any) {
+    logger.error('Get User Bank Accounts Error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve bank accounts.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+};

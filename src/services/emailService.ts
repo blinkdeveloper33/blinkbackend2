@@ -14,7 +14,7 @@ const generateOTPEmailTemplate = (otp: string): string => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Your Blink Finances Verification Code</title>
+      <title>Your Blink Verification Code</title>
     </head>
     <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
       <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8f8f8; border-radius: 5px;">
@@ -28,7 +28,7 @@ const generateOTPEmailTemplate = (otp: string): string => {
             </div>
             <p style="font-size: 16px; margin-bottom: 20px;">This code will expire in 10 minutes for security reasons. If you didn't request this code, please ignore this email.</p>
             <p style="font-size: 16px; margin-bottom: 20px;">If you have any questions or need assistance, please don't hesitate to contact our support team.</p>
-            <p style="font-size: 16px; margin-bottom: 20px;">Best regards,<br>The Blink Finances Team</p>
+            <p style="font-size: 16px; margin-bottom: 20px;">Best regards,<br>The Rise Digital Team</p>
           </td>
         </tr>
       </table>

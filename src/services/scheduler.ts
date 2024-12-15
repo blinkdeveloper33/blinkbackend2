@@ -1,38 +1,9 @@
 // src/services/scheduler.ts ⭐️⭐️⭐️
 
-
 import cron from 'node-cron';
 import supabase from './supabaseService';
 import logger from './logger';
 import { fetchAndStoreAccountBalances } from '../controllers/plaidController';
-
-// Define types for database responses
-interface RegistrationSession {
-  id: string;
-  expires_at: string;
-}
-
-interface User {
-  id: string;
-}
-
-// Define Database schema types
-interface Database {
-  public: {
-    Tables: {
-      registration_sessions: {
-        Row: RegistrationSession;
-        Insert: RegistrationSession;
-        Update: Partial<RegistrationSession>;
-      };
-      users: {
-        Row: User;
-        Insert: User;
-        Update: Partial<User>;
-      };
-    };
-  };
-}
 
 /**
  * Schedules a daily task to clean up expired registration sessions.

@@ -10,7 +10,9 @@ import {
   loginUser,
   fetchUserProfile,
   getUserStatus,
-  getUserBankAccounts, // Import the new controller function
+  getUserBankAccounts,
+  getUserBankAccountsDetailed,
+  getUserAccountData,
 } from '../controllers/userController';
 import authMiddleware from '../middleware/authMiddleware';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
@@ -158,7 +160,7 @@ router.get('/status/:userId', (req: Request, res: Response) => {
 });
 
 /**
- * New Route: Get User Bank Accounts
+ * Get User Bank Accounts (Summary)
  * GET /api/users/bank-accounts
  */
 router.get(
@@ -167,6 +169,23 @@ router.get(
     await getUserBankAccounts(req, res);
   }
 );
+
+/**
+ * Get Detailed User Bank Accounts
+ * GET /api/users/bank-accounts/detailed
+ */
+router.get(
+  '/bank-accounts/detailed',
+  async (req: Request, res: Response, next: NextFunction) => {
+    await getUserBankAccountsDetailed(req, res);
+  }
+);
+
+/**
+ * Get User Account Data
+ * GET /api/users/account-data
+ */
+router.get('/account-data', authMiddleware, getUserAccountData);
 
 /**
  * Error handling middleware
@@ -181,3 +200,4 @@ router.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 });
 
 export default router;
+

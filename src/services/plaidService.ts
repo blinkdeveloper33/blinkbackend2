@@ -3,7 +3,9 @@
 import { Configuration, PlaidApi, PlaidEnvironments } from 'plaid';
 import config from '../config';
 
-// Initialize the Plaid client
+/**
+ * Initialize the Plaid client
+ */
 const configuration = new Configuration({
   basePath: PlaidEnvironments[config.PLAID_ENV as keyof typeof PlaidEnvironments],
   baseOptions: {
@@ -18,4 +20,3 @@ const configuration = new Configuration({
 const plaidClient = new PlaidApi(configuration);
 
 export default plaidClient;
-

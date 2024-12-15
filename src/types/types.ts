@@ -117,6 +117,18 @@ export interface BankAccountSummary {
 }
 
 /**
+ * BankAccountDetailed Interface
+ */
+export interface BankAccountDetailed extends BankAccountSummary {
+  account_subtype: string;
+  account_mask: string;
+  available_balance: number;
+  current_balance: number;
+  created_at: string;
+  cursor: string | null;
+}
+
+/**
  * Database Interface for Supabase
  */
 export interface Database {

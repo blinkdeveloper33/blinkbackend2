@@ -1,3 +1,5 @@
+// src/services/emailService.ts
+
 import nodemailer from 'nodemailer';
 import config from '../config';
 import logger from './logger';
@@ -28,7 +30,7 @@ const generateOTPEmailTemplate = (otp: string): string => {
             </div>
             <p style="font-size: 16px; margin-bottom: 20px;">This code will expire in 10 minutes for security reasons. If you didn't request this code, please ignore this email.</p>
             <p style="font-size: 16px; margin-bottom: 20px;">If you have any questions or need assistance, please don't hesitate to contact our support team.</p>
-            <p style="font-size: 16px; margin-bottom: 20px;">Best regards,<br>The Rise Digital Team</p>
+            <p style="font-size: 16px; margin-bottom: 20px;">Best regards,<br>The Blink Team</p>
           </td>
         </tr>
       </table>
@@ -70,4 +72,3 @@ export const sendOTPEmail = async (to: string, otp: string): Promise<void> => {
     throw new Error('Failed to send OTP email.');
   }
 };
-

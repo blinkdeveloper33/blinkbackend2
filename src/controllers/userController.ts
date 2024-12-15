@@ -8,7 +8,8 @@ import { sendOTPEmail } from '../services/emailService';
 import { generateOTP } from '../utils/otpGenerator';
 import jwt from 'jsonwebtoken';
 import config from '../config';
-import { User, RegistrationSession, BankAccount, BankAccountSummary } from '../types/types';
+import { User, RegistrationSession, BankAccount, BankAccountSummary, BankAccountDetailed, Transaction } from '../types/types';
+import { AuthenticatedRequest } from '../middleware/authMiddleware';
 
 /**
  * Generates a JWT token for the user.
@@ -23,7 +24,7 @@ const generateJWT = (userId: string): string => {
  * Registers the user's email and sends an OTP.
  * This initializes a registration session.
  */
-export const registerInitial = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+const registerInitial = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   const { email } = req.body;
 
   try {
@@ -95,7 +96,7 @@ export const registerInitial = async (req: Request, res: Response, next: NextFun
 /**
  * Verifies the OTP entered by the user.
  */
-export const verifyOTP = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+const verifyOTP = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   const { email, otp } = req.body;
 
   try {
@@ -162,7 +163,7 @@ export const verifyOTP = async (req: Request, res: Response, next: NextFunction)
 /**
  * Resends a new OTP to the user's email.
  */
-export const resendOtp = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+const resendOtp = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   const { email } = req.body;
 
   try {
@@ -226,7 +227,7 @@ const resendOtpInternal = async (email: string): Promise<void> => {
 /**
  * Completes user registration by storing profile details and password.
  */
-export const registerComplete = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+const registerComplete = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   const { email, password, first_name, last_name, state, zipcode } = req.body;
 
   try {
@@ -325,7 +326,7 @@ export const registerComplete = async (req: Request, res: Response, next: NextFu
 /**
  * Logs in the user and retrieves a JWT token.
  */
-export const loginUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+const loginUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   const { email, password } = req.body;
 
   try {
@@ -389,7 +390,7 @@ export const loginUser = async (req: Request, res: Response, next: NextFunction)
 /**
  * Fetches the authenticated user's profile information.
  */
-export const fetchUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+const fetchUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   // Assuming authMiddleware has set req.user
   const user = (req as any).user;
 
@@ -424,7 +425,7 @@ export const fetchUserProfile = async (req: Request, res: Response, next: NextFu
  * @param req - Express Request object
  * @param res - Express Response object
  */
-export const getUserStatus = async (req: Request, res: Response): Promise<void> => {
+const getUserStatus = async (req: Request, res: Response): Promise<void> => {
   const { userId } = req.params;
 
   try {
@@ -473,7 +474,7 @@ export const getUserStatus = async (req: Request, res: Response): Promise<void> 
 /**
  * Retrieves all bank account IDs for the authenticated user.
  */
-export const getUserBankAccounts = async (req: Request, res: Response): Promise<void> => {
+const getUserBankAccounts = async (req: Request, res: Response): Promise<void> => {
   // Assuming authMiddleware sets req.user
   const user = (req as any).user;
 
@@ -528,3 +529,204 @@ export const getUserBankAccounts = async (req: Request, res: Response): Promise<
     });
   }
 };
+
+/**
+ * Retrieves detailed bank account information for the authenticated user.
+ */
+const getUserBankAccountsDetailed = async (req: Request, res: Response): Promise<void> => {
+  // Assuming authMiddleware sets req.user
+  const user = (req as any).user;
+
+  if (!user) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User information not found.',
+    });
+    return;
+  }
+
+  try {
+    // Fetch detailed bank account information
+    const { data: bankAccounts, error } = await supabase
+      .from('bank_accounts')
+      .select(`
+        id, 
+        account_name, 
+        account_type, 
+        account_subtype,
+        account_mask,
+        available_balance,
+        current_balance,
+        currency,
+        created_at,
+        cursor
+      `)
+      .eq('user_id', user.id);
+
+    if (error) {
+      throw new Error('Error fetching bank accounts: ' + error.message);
+    }
+
+    if (!bankAccounts) {
+      res.status(200).json({
+        success: true,
+        bankAccounts: []
+      });
+      return;
+    }
+
+    // Cast the data as BankAccountDetailed[]
+    const bankAccountsDetailed = bankAccounts as BankAccountDetailed[];
+
+    // Format the response to include only necessary fields and exclude sensitive data
+    const formattedAccounts = bankAccountsDetailed.map((account) => ({
+      bankAccountId: account.id,
+      accountName: account.account_name,
+      accountType: account.account_type,
+      accountSubtype: account.account_subtype,
+      accountMask: account.account_mask,
+      availableBalance: account.available_balance,
+      currentBalance: account.current_balance,
+      currency: account.currency,
+      createdAt: account.created_at,
+      cursor: account.cursor,
+    }));
+
+    res.status(200).json({
+      success: true,
+      bankAccounts: formattedAccounts,
+    });
+  } catch (error: any) {
+    logger.error('Get Detailed User Bank Accounts Error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve detailed bank accounts.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+};
+
+
+/**
+ * Retrieves all user data required for the AccountScreen.
+ */
+const getUserAccountData = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User not found.',
+    });
+    return;
+  }
+
+  try {
+    // Fetch user profile
+    const { data: userProfile, error: userError } = await supabase
+      .from('users')
+      .select('first_name, last_name, email, created_at')
+      .eq('id', userId)
+      .single();
+
+    if (userError) throw new Error('Error fetching user profile: ' + userError.message);
+
+    // Fetch bank accounts
+    const { data: bankAccounts, error: bankError } = await supabase
+      .from('bank_accounts')
+      .select('id, account_name, account_type, current_balance, available_balance, currency')
+      .eq('user_id', userId);
+
+    if (bankError) throw new Error('Error fetching bank accounts: ' + bankError.message);
+
+    // Calculate total balance
+    const totalBalance = bankAccounts.reduce((sum, account) => sum + (account.current_balance || 0), 0);
+
+    // Fetch recent transactions
+    const { data: recentTransactions, error: transactionError } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('date', { ascending: false })
+      .limit(5);
+
+    if (transactionError) throw new Error('Error fetching recent transactions: ' + transactionError.message);
+
+    // Fetch transaction statistics
+    const { data: transactionStats, error: statsError } = await supabase
+      .from('transactions')
+      .select('id', { count: 'exact' })
+      .eq('user_id', userId);
+
+    if (statsError) throw new Error('Error fetching transaction statistics: ' + statsError.message);
+
+    const totalTransactions = transactionStats.length;
+
+    // Calculate average spending (using the last 30 transactions for this example)
+    const { data: lastThirtyTransactions, error: avgError } = await supabase
+      .from('transactions')
+      .select('amount')
+      .eq('user_id', userId)
+      .order('date', { ascending: false })
+      .limit(30);
+
+    if (avgError) throw new Error('Error fetching transactions for average spending: ' + avgError.message);
+
+    const averageSpending = lastThirtyTransactions.length > 0
+      ? lastThirtyTransactions.reduce((sum, transaction) => sum + transaction.amount, 0) / lastThirtyTransactions.length
+      : 0;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        userProfile: {
+          name: `${userProfile.first_name} ${userProfile.last_name}`,
+          email: userProfile.email,
+          memberSince: userProfile.created_at,
+        },
+        totalBalance,
+        accountStats: {
+          totalTransactions,
+          averageSpending,
+          linkedAccounts: bankAccounts.length,
+        },
+        linkedAccounts: bankAccounts.map(account => ({
+          id: account.id,
+          accountName: account.account_name,
+          accountType: account.account_type,
+          balance: account.current_balance,
+          availableBalance: account.available_balance,
+          currency: account.currency,
+        })),
+        recentTransactions: recentTransactions.map(transaction => ({
+          id: transaction.id,
+          amount: transaction.amount,
+          date: transaction.date,
+          description: transaction.description,
+          category: transaction.category,
+        })),
+      },
+    });
+  } catch (error: any) {
+    logger.error('Get User Account Data Error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve user account data.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+};
+
+export {
+  registerInitial,
+  verifyOTP,
+  resendOtp,
+  registerComplete,
+  loginUser,
+  fetchUserProfile,
+  getUserStatus,
+  getUserBankAccounts,
+  getUserBankAccountsDetailed,
+  getUserAccountData,
+};
+

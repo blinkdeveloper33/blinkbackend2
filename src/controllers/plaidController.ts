@@ -6,7 +6,6 @@ import {
   PlaidApi, 
   PlaidEnvironments, 
   Products,
-  SandboxPublicTokenCreateRequest,
   Transaction as PlaidApiTransaction,
   TransactionsSyncRequest as PlaidTransactionsSyncRequest,
   RemovedTransaction,
@@ -125,35 +124,6 @@ export const handleWebhook = async (req: Request, res: Response): Promise<void> 
     res.status(500).json({ 
       success: false,
       error: 'Internal Server Error' 
-    });
-  }
-};
-
-/**
- * Generate a sandbox public token
- * @param req - Express Request object
- * @param res - Express Response object
- */
-export const generateSandboxPublicToken = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { institution_id, initial_products, webhook } = req.body;
-    const tokenRequest: SandboxPublicTokenCreateRequest = {
-      institution_id: institution_id || 'ins_109508',
-      initial_products: initial_products || [Products.Transactions],
-      options: { webhook: webhook || config.PLAID_WEBHOOK_URL }
-    };
-    const response = await plaidClient.sandboxPublicTokenCreate(tokenRequest);
-    res.status(200).json({
-      success: true,
-      public_token: response.data.public_token,
-      request_id: response.data.request_id
-    });
-  } catch (error: any) {
-    logger.error('Error generating sandbox public token:', error.response?.data || error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to generate sandbox public token',
-      details: error.response?.data || error.message
     });
   }
 };
@@ -623,3 +593,62 @@ export const getCurrentBalances = async (req: Request, res: Response): Promise<v
     });
   }
 };
+
+/**
+ * Get all transactions for the authenticated user
+ * @param req - Express Request object
+ * @param res - Express Response object
+ */
+export const getAllTransactions = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user.id; // Assuming authMiddleware sets req.user
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = parseInt(req.query.pageSize as string) || 100;
+    const offset = (page - 1) * pageSize;
+
+    // Fetch total count of transactions
+    const { count, error: countError } = await supabase
+      .from('transactions')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    if (countError) {
+      throw new Error('Error fetching transaction count: ' + countError.message);
+    }
+
+    // Fetch transactions with pagination
+    const { data: transactions, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('date', { ascending: false })
+      .range(offset, offset + pageSize - 1);
+
+    if (error) {
+      throw new Error('Error fetching transactions: ' + error.message);
+    }
+
+    const totalPages = Math.ceil((count || 0) / pageSize);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        transactions,
+        pagination: {
+          page,
+          pageSize,
+          totalPages,
+          totalCount: count
+        }
+      }
+    });
+  } catch (error: any) {
+    logger.error('Get All Transactions Error:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to retrieve transactions', 
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined 
+    });
+  }
+};
+

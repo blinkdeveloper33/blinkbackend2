@@ -7,11 +7,11 @@ import {
   exchangePublicToken,
   getTransactions,
   transactionsSyncHandler,
-  generateSandboxPublicToken,
   syncBalancesHandler,
   handleWebhook,
   getRecentTransactions,
-  getCurrentBalances
+  getCurrentBalances,
+  getAllTransactions
 } from '../controllers/plaidController';
 import authMiddleware from '../middleware/authMiddleware';
 import rateLimit from 'express-rate-limit';
@@ -137,28 +137,6 @@ router.post(
 );
 
 /**
- * Sandbox Public Token Generation Endpoint
- */
-router.post(
-  '/sandbox/public_token/create',
-  validate([
-    body('institution_id')
-      .optional()
-      .isString()
-      .withMessage('Institution ID must be a string'),
-    body('initial_products')
-      .optional()
-      .isArray()
-      .withMessage('Initial Products must be an array of strings'),
-    body('webhook')
-      .optional()
-      .isURL()
-      .withMessage('Webhook must be a valid URL'),
-  ]),
-  generateSandboxPublicToken
-);
-
-/**
  * Sync balances endpoint
  */
 router.post(
@@ -191,6 +169,16 @@ router.get(
   (req: Request, res: Response, next: NextFunction) => {
     getCurrentBalances(req, res);
   }
+);
+
+/**
+ * Get all transactions for a user
+ * GET /api/plaid/all-transactions
+ */
+router.get(
+  '/all-transactions',
+  authMiddleware,
+  getAllTransactions
 );
 
 export default router;

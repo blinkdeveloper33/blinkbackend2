@@ -23,6 +23,7 @@ import {
   TransactionsSyncRequest,
   CustomTransactionsSyncResponse
 } from '../types/types'; // Updated to match your types file
+import { AuthenticatedRequest } from '../middleware/authMiddleware';
 
 // Initialize Plaid client
 const configuration = new Configuration({
@@ -648,6 +649,72 @@ export const getAllTransactions = async (req: Request, res: Response): Promise<v
       success: false, 
       error: 'Failed to retrieve transactions', 
       details: process.env.NODE_ENV === 'development' ? error.message : undefined 
+    });
+  }
+};
+
+/**
+ * Retrieves daily transaction summaries for the last 15 days
+ */
+export const getDailyTransactionSummary = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User not found.',
+    });
+    return;
+  }
+
+  try {
+    // Calculate the date 15 days ago
+    const fifteenDaysAgo = new Date();
+    fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 14); // 14 because we want to include today
+
+    // Fetch transactions for the last 15 days
+    const { data: transactions, error } = await supabase
+      .from('transactions')
+      .select('amount, date')
+      .eq('user_id', userId)
+      .gte('date', fifteenDaysAgo.toISOString().split('T')[0])
+      .order('date', { ascending: false });
+
+    if (error) {
+      throw new Error('Error fetching transactions: ' + error.message);
+    }
+
+    // Group transactions by date and calculate summaries
+    const dailySummaries = transactions.reduce((acc: any, transaction: any) => {
+      const date = transaction.date;
+      if (!acc[date]) {
+        acc[date] = { totalAmount: 0, transactionCount: 0 };
+      }
+      acc[date].totalAmount += transaction.amount;
+      acc[date].transactionCount += 1;
+      return acc;
+    }, {});
+
+    // Convert to array and format
+    const formattedSummaries = Object.entries(dailySummaries).map(([date, summary]: [string, any]) => ({
+      date,
+      totalAmount: Number(summary.totalAmount.toFixed(2)),
+      transactionCount: summary.transactionCount,
+    }));
+
+    // Sort by date descending
+    formattedSummaries.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    res.status(200).json({
+      success: true,
+      data: formattedSummaries,
+    });
+  } catch (error: any) {
+    logger.error('Get Daily Transaction Summary Error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve daily transaction summary.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
   }
 };

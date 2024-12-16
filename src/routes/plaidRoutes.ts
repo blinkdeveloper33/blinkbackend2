@@ -11,7 +11,8 @@ import {
   handleWebhook,
   getRecentTransactions,
   getCurrentBalances,
-  getAllTransactions
+  getAllTransactions,
+  getDailyTransactionSummary,
 } from '../controllers/plaidController';
 import authMiddleware from '../middleware/authMiddleware';
 import rateLimit from 'express-rate-limit';
@@ -181,5 +182,14 @@ router.get(
   getAllTransactions
 );
 
-export default router;
+/**
+ * Get Daily Transaction Summary
+ * GET /api/plaid/daily-transaction-summary
+ */
+router.get(
+  '/daily-transaction-summary',
+  authMiddleware,
+  getDailyTransactionSummary
+);
 
+export default router;

@@ -14,6 +14,7 @@ import {
   getAllTransactions,
   getDailyTransactionSummary,
   getSpendingSummary,
+  getTransactionCategoryAnalysis, // New import
 } from '../controllers/plaidController';
 import authMiddleware from '../middleware/authMiddleware';
 import rateLimit from 'express-rate-limit';
@@ -201,6 +202,16 @@ router.get(
  '/spending-summary',
  authMiddleware,
  getSpendingSummary
+);
+
+/**
+* Get Transaction Category Analysis
+* GET /api/plaid/category-analysis
+*/
+router.get(
+  '/category-analysis',
+  authMiddleware,
+  getTransactionCategoryAnalysis
 );
 
 export default router;

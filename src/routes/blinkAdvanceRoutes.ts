@@ -6,7 +6,9 @@ import {
   createBlinkAdvance,
   getBlinkAdvances,
   getBlinkAdvanceById,
-  updateBlinkAdvanceStatus
+  updateBlinkAdvanceStatus,
+  getBlinkAdvanceApprovalStatus,
+  checkActiveBlinkAdvance
 } from '../controllers/blinkAdvanceController';
 import authMiddleware from '../middleware/authMiddleware';
 
@@ -30,6 +32,26 @@ const validate = (validations: ValidationChain[]) => {
     next();
   };
 };
+
+/**
+ * Get Blink Advance Approval Status
+ * GET /api/blink-advances/approval-status
+ */
+router.get(
+  '/approval-status',
+  authMiddleware,
+  getBlinkAdvanceApprovalStatus
+);
+
+/**
+ * Check Active Blink Advance
+ * GET /api/blink-advances/active
+ */
+router.get(
+  '/active',
+  authMiddleware,
+  checkActiveBlinkAdvance
+);
 
 /**
  * Create BlinkAdvance Endpoint
@@ -108,3 +130,4 @@ router.patch(
 );
 
 export default router;
+

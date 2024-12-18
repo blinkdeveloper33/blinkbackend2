@@ -800,27 +800,125 @@ export const getSpendingSummary = async (req: AuthenticatedRequest, res: Respons
 };
 
 /**
-* Calculate date range based on time frame
-* @param timeFrame - 'week', 'month', 'QTD', or 'year'
-* @returns Object with startDate and endDate
-*/
+ * Get transaction category analysis for the authenticated user
+ * @param req - Express Request object
+ * @param res - Express Response object
+ */
+export const getTransactionCategoryAnalysis = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+  const timeFrame = req.query.timeFrame as string;
+
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User not found.',
+    });
+    return;
+  }
+
+  if (!['1year', 'YTD', '6months', 'quarter', 'QTD', 'month', 'MTD', 'week', 'WTD'].includes(timeFrame)) {
+    res.status(400).json({
+      success: false,
+      error: 'Invalid time frame. Must be 1year, YTD, 6months, quarter, QTD, month, MTD, week, or WTD.',
+    });
+    return;
+  }
+
+  try {
+    const { startDate, endDate } = calculateDateRange(timeFrame);
+
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('amount, category, date')
+      .eq('user_id', userId)
+      .gt('amount', 0) // Only consider positive amounts (expenses)
+      .gte('date', startDate.toISOString().split('T')[0])
+      .lte('date', endDate.toISOString().split('T')[0]);
+
+    if (error) {
+      throw new Error('Error fetching transactions: ' + error.message);
+    }
+
+    const categorySummary = (data as { amount: number; category: string | null; date: string }[]).reduce((acc: Record<string, { totalSpent: number; transactionCount: number }>, transaction) => {
+      const category = transaction.category || 'Uncategorized';
+      if (!acc[category]) {
+        acc[category] = { totalSpent: 0, transactionCount: 0 };
+      }
+      acc[category].totalSpent += transaction.amount;
+      acc[category].transactionCount += 1;
+      return acc;
+    }, {});
+
+    const totalSpending = Object.values(categorySummary).reduce((sum: number, category) => sum + category.totalSpent, 0);
+
+    const formattedSummary = Object.entries(categorySummary).map(([category, summary]: [string, any]) => ({
+      name: category,
+      amount: Number(summary.totalSpent.toFixed(2)),
+      percentage: Number(((summary.totalSpent / totalSpending) * 100).toFixed(2)),
+      transactionCount: summary.transactionCount,
+    }));
+
+    // Sort categories by amount spent (descending)
+    formattedSummary.sort((a, b) => b.amount - a.amount);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        timeFrame,
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0],
+        totalSpending: Number(totalSpending.toFixed(2)),
+        categories: formattedSummary,
+      },
+    });
+  } catch (error: any) {
+    logger.error('Get Transaction Category Analysis Error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve transaction category analysis.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+};
+
+/**
+ * Calculate date range based on time frame
+ * @param timeFrame - '1year', 'YTD', '6months', 'quarter', 'QTD', 'month', 'MTD', 'week', or 'WTD'
+ * @returns Object with startDate and endDate
+ */
 function calculateDateRange(timeFrame: string): { startDate: Date; endDate: Date } {
   const endDate = new Date();
   let startDate = new Date();
 
   switch (timeFrame) {
-    case 'week':
-      startDate.setDate(endDate.getDate() - 6);
+    case '1year':
+      startDate.setFullYear(endDate.getFullYear() - 1);
       break;
-    case 'month':
-      startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+    case 'YTD':
+      startDate = new Date(endDate.getFullYear(), 0, 1); // January 1st of current year
+      break;
+    case '6months':
+      startDate.setMonth(endDate.getMonth() - 6);
+      break;
+    case 'quarter':
+      startDate.setMonth(endDate.getMonth() - 3);
       break;
     case 'QTD':
-      const quarter = Math.floor(endDate.getMonth() / 3);
-      startDate = new Date(endDate.getFullYear(), quarter * 3, 1);
+      const quarterStartMonth = Math.floor(endDate.getMonth() / 3) * 3;
+      startDate = new Date(endDate.getFullYear(), quarterStartMonth, 1);
       break;
-    case 'year':
-      startDate = new Date(endDate.getFullYear(), 0, 1);
+    case 'month':
+      startDate.setMonth(endDate.getMonth() - 1);
+      break;
+    case 'MTD':
+      startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+      break;
+    case 'week':
+      startDate.setDate(endDate.getDate() - 7);
+      break;
+    case 'WTD':
+      const day = endDate.getDay();
+      startDate.setDate(endDate.getDate() - day + (day === 0 ? -6 : 1)); // Adjust for Sunday
       break;
     default:
       throw new Error('Invalid time frame');

@@ -4,6 +4,7 @@ import { Request, Response } from 'express';
 import supabase from '../services/supabaseService';
 import logger from '../services/logger';
 import { BlinkAdvance } from '../types/types';
+import { AuthenticatedRequest } from '../middleware/authMiddleware';
 
 /**
  * Creates a new BlinkAdvance request.
@@ -288,3 +289,123 @@ export const updateBlinkAdvanceStatus = async (req: Request, res: Response): Pro
     }
   }
 };
+
+/**
+ * Retrieves the Blink Advance approval status for the authenticated user.
+ */
+export const getBlinkAdvanceApprovalStatus = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User not found.',
+    });
+    return;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('blink_advance_approvals')
+      .select('is_approved, approved_at')
+      .eq('user_id', userId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        // No matching row found, user not in approvals table
+        res.status(200).json({
+          success: true,
+          data: {
+            isApproved: false,
+            approvedAt: null,
+            status: 'On Review'
+          }
+        });
+        return;
+      }
+      throw error;
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        isApproved: data.is_approved,
+        approvedAt: data.approved_at,
+        status: data.is_approved ? 'Approved' : 'On Review'
+      }
+    });
+  } catch (error: any) {
+    logger.error('Get Blink Advance Approval Status Error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve Blink Advance approval status.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+};
+
+/**
+ * Checks if the authenticated user has an active Blink Advance.
+ */
+export const checkActiveBlinkAdvance = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User not found.',
+    });
+    return;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('blink_advances')
+      .select('id, requested_amount, transfer_speed, fee, repay_date, disbursed_at')
+      .eq('user_id', userId)
+      .not('disbursed_at', 'is', null)
+      .is('repaid_at', null)
+      .order('disbursed_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        // No active Blink Advance found
+        res.status(200).json({
+          success: true,
+          data: {
+            hasActiveAdvance: false
+          }
+        });
+        return;
+      }
+      throw error;
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        hasActiveAdvance: true,
+        activeAdvance: {
+          id: data.id,
+          requestedAmount: data.requested_amount,
+          transferSpeed: data.transfer_speed,
+          fee: data.fee,
+          repayDate: data.repay_date,
+          disbursedAt: data.disbursed_at
+        }
+      }
+    });
+  } catch (error: any) {
+    logger.error('Check Active Blink Advance Error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check for active Blink Advance.',
+      details: error.message, // Temporarily include error details
+      stack: error.stack // Temporarily include stack trace
+    });
+  }
+};
+

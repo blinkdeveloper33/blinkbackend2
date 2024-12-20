@@ -14,7 +14,7 @@ import {
   getAllTransactions,
   getDailyTransactionSummary,
   getSpendingSummary,
-  getTransactionCategoryAnalysis, // New import
+  getTransactionCategoryAnalysis,
 } from '../controllers/plaidController';
 import authMiddleware from '../middleware/authMiddleware';
 import rateLimit from 'express-rate-limit';

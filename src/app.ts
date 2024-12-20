@@ -11,6 +11,7 @@ import config from './config';
 import plaidRoutes from './routes/plaidRoutes';
 import userRoutes from './routes/userRoutes';
 import blinkAdvanceRoutes from './routes/blinkAdvanceRoutes'; // Import BlinkAdvance routes
+import cashFlowRoutes from './routes/cashFlowRoutes'; // Import CashFlow routes
 
 // Import Logger
 import logger from './services/logger';
@@ -52,6 +53,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/plaid', plaidRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/blink-advances', blinkAdvanceRoutes); // Use BlinkAdvance routes
+app.use('/api/cash-flow', cashFlowRoutes); // Use CashFlow routes
 
 // Root Endpoint
 app.get('/', (req: Request, res: Response) => {
@@ -95,3 +97,4 @@ app.listen(config.PORT, () => {
 });
 
 export default app;
+

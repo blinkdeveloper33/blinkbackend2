@@ -22,25 +22,6 @@ import rateLimit from 'express-rate-limit';
 const router: Router = express.Router();
 
 /**
- * Custom validation middleware
- */
-const validate = (validations: ValidationChain[]) => {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    await Promise.all(validations.map(validation => validation.run(req)));
-
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      res.status(400).json({ 
-          success: false,
-          errors: errors.array() 
-      });
-      return;
-    }
-    next();
-  };
-};
-
-/**
  * Rate limiter for webhook endpoint
  */
 const webhookLimiter = rateLimit({
@@ -60,6 +41,26 @@ router.post('/webhook', webhookLimiter, handleWebhook);
 
 // Apply authentication middleware for all routes below
 router.use(authMiddleware);
+
+/**
+ * Custom validation middleware
+ */
+const validate = (validations: ValidationChain[]) => {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    await Promise.all(validations.map(validation => validation.run(req)));
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ 
+          success: false,
+          errors: errors.array() 
+      });
+      return;
+    }
+    next();
+  };
+};
+
 
 /**
  * Create link token endpoint

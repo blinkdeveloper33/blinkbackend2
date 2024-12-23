@@ -1,6 +1,6 @@
 // src/app.ts
 
-import express, { Application, Request, Response, NextFunction } from 'express';
+import express, { Application, Request, Response, NextFunction, Router } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -8,10 +8,11 @@ import rateLimit from 'express-rate-limit';
 import config from './config';
 
 // Import Routes
+import { publicUserRoutes, protectedUserRoutes } from './routes/userRoutes';
 import plaidRoutes from './routes/plaidRoutes';
-import userRoutes from './routes/userRoutes';
-import blinkAdvanceRoutes from './routes/blinkAdvanceRoutes'; // Import BlinkAdvance routes
-import cashFlowRoutes from './routes/cashFlowRoutes'; // Import CashFlow routes
+import blinkAdvanceRoutes from './routes/blinkAdvanceRoutes';
+import cashFlowRoutes from './routes/cashFlowRoutes';
+import blinkAdvanceDisbursementRoutes from './routes/blinkAdvanceDisbursementRoutes';
 
 // Import Logger
 import logger from './services/logger';
@@ -19,10 +20,28 @@ import logger from './services/logger';
 // Import Scheduler
 import { scheduleCleanupExpiredSessions, scheduleBalanceSync } from './services/scheduler';
 
+// Import authMiddleware
+import authMiddleware from './middleware/authMiddleware';
+
 const app: Application = express();
+
+// Debug logging middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  logger.debug(`Request received: ${req.method} ${req.originalUrl}`);
+  next();
+});
 
 // Middleware
 app.use(helmet());
+app.use(cors({
+  origin: '*',
+  credentials: false
+}));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// HTTP Request Logging using Winston
+app.use(morgan('combined', { stream: { write: (message) => logger.info(message.trim()) } }));
 
 // Rate Limiting
 const limiter = rateLimit({
@@ -36,26 +55,22 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// HTTP Request Logging using Winston
-app.use(morgan('combined', { stream: { write: (message) => logger.info(message.trim()) } }));
+// Public Routes
+app.use('/api/users', publicUserRoutes);
+app.post('/api/plaid/webhook', plaidRoutes);
 
-// CORS Configuration
-app.use(cors({
-  origin: '*',
-  credentials: false
-}));
+// Apply authMiddleware to all routes below this line
+app.use(authMiddleware);
 
-// Body Parser (Using built-in Express middleware)
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Routes
+// Protected Routes
+app.use('/api/users', protectedUserRoutes);
 app.use('/api/plaid', plaidRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/blink-advances', blinkAdvanceRoutes); // Use BlinkAdvance routes
-app.use('/api/cash-flow', cashFlowRoutes); // Use CashFlow routes
+app.use('/api/cash-flow', cashFlowRoutes);
+app.use('/api/blink-advances', blinkAdvanceRoutes);
+app.use('/api/blink-advances', blinkAdvanceDisbursementRoutes);
 
-// Root Endpoint
+
+// Root Endpoint (public)
 app.get('/', (req: Request, res: Response) => {
   res.status(200).json({ 
     success: true,
@@ -63,7 +78,7 @@ app.get('/', (req: Request, res: Response) => {
   });
 });
 
-// Health Check Endpoint
+// Health Check Endpoint (public)
 app.get('/api/health', (req: Request, res: Response) => {
   res.status(200).json({ success: true, message: 'Server is healthy' });
 });
@@ -79,7 +94,7 @@ app.use(
     if (res.headersSent) {
       return next(err);
     }
-    logger.error('Unhandled Error:', err.stack);
+    logger.error('Unhandled Error in Global Middleware:', err.stack);
     res.status(500).json({ 
       success: false,
       error: 'Something went wrong!' 
@@ -93,7 +108,7 @@ app.listen(config.PORT, () => {
 
   // Start scheduled tasks
   scheduleCleanupExpiredSessions();
-  scheduleBalanceSync(); // Ensure to schedule balance synchronization if needed
+  scheduleBalanceSync();
 });
 
 export default app;

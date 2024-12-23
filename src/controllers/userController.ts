@@ -1,4 +1,4 @@
-// src/controllers/userController.ts ⭐️⭐️⭐️
+// src/controllers/userController.ts
 
 import { Request, Response, NextFunction } from 'express';
 import supabase from '../services/supabaseService';
@@ -390,9 +390,8 @@ const loginUser = async (req: Request, res: Response, next: NextFunction): Promi
 /**
  * Fetches the authenticated user's profile information.
  */
-const fetchUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-  // Assuming authMiddleware has set req.user
-  const user = (req as any).user;
+const fetchUserProfile = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  const user = req.user;
 
   try {
     if (!user) {
@@ -403,12 +402,12 @@ const fetchUserProfile = async (req: Request, res: Response, next: NextFunction)
       return;
     }
 
-    // Exclude sensitive fields like password
-    const { password, ...userProfile } = user;
+    // Since 'password' is not part of 'user', we don't need to exclude it
+    // If 'user' had more properties to exclude, handle them accordingly
 
     res.status(200).json({
       success: true,
-      data: userProfile,
+      data: user, // Directly send the user profile
     });
   } catch (error: any) {
     logger.error('Fetch Profile Error:', error.message);
@@ -475,8 +474,8 @@ const getUserStatus = async (req: Request, res: Response): Promise<void> => {
  * Retrieves all bank account IDs for the authenticated user.
  */
 const getUserBankAccounts = async (req: Request, res: Response): Promise<void> => {
-  // Assuming authMiddleware sets req.user
-  const user = (req as any).user;
+  const authReq = req as AuthenticatedRequest;
+  const user = authReq.user;
 
   if (!user) {
     res.status(401).json({
@@ -534,8 +533,8 @@ const getUserBankAccounts = async (req: Request, res: Response): Promise<void> =
  * Retrieves detailed bank account information for the authenticated user.
  */
 const getUserBankAccountsDetailed = async (req: Request, res: Response): Promise<void> => {
-  // Assuming authMiddleware sets req.user
-  const user = (req as any).user;
+  const authReq = req as AuthenticatedRequest;
+  const user = authReq.user;
 
   if (!user) {
     res.status(401).json({
@@ -605,7 +604,6 @@ const getUserBankAccountsDetailed = async (req: Request, res: Response): Promise
     });
   }
 };
-
 
 /**
  * Retrieves all user data required for the AccountScreen.

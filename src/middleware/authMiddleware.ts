@@ -1,4 +1,4 @@
-// src/middleware/authMiddleware.ts ⭐️⭐️⭐️
+// src/middleware/authMiddleware.ts
 
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
@@ -25,7 +25,10 @@ export interface AuthenticatedRequest extends Request {
 const authMiddleware = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers['authorization'];
 
+  logger.info(`Auth Middleware invoked for ${req.method} ${req.originalUrl}`);
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    logger.warn(`Unauthorized access attempt to ${req.originalUrl}: No token provided.`);
     res.status(401).json({ 
       success: false,
       error: 'Unauthorized: No token provided.' 
@@ -36,6 +39,7 @@ const authMiddleware = async (req: AuthenticatedRequest, res: Response, next: Ne
   const token = authHeader.split(' ')[1]; // Expecting format: "Bearer <token>"
 
   if (!token) {
+    logger.warn(`Unauthorized access attempt to ${req.originalUrl}: Token missing.`);
     res.status(401).json({ 
       success: false,
       error: 'Unauthorized: Token missing.' 
@@ -44,21 +48,20 @@ const authMiddleware = async (req: AuthenticatedRequest, res: Response, next: Ne
   }
 
   try {
-    // Adjust the expected payload to match the JWT generation
+    // Verify JWT token
     const decoded = jwt.verify(token, config.JWT_SECRET) as { id: string };
 
-    console.log('Decoded JWT:', decoded); // Debugging: Log decoded JWT
+    logger.info(`Decoded JWT for user ID: ${decoded.id}`);
 
-    // Fetch user from Supabase using the correct ID
+    // Fetch user from Supabase using the decoded ID
     const { data: user, error } = await supabase
       .from('users')
       .select('id, email, first_name, last_name') // Select necessary fields
-      .eq('id', decoded.id) // Use 'id' instead of 'userId'
+      .eq('id', decoded.id)
       .single();
 
-    console.log('Supabase query result:', user, error); // Debugging: Log query result
-
     if (error || !user) {
+      logger.warn(`Unauthorized access attempt: User not found for ID ${decoded.id}`);
       res.status(401).json({ 
         success: false,
         error: 'Unauthorized: User not found.' 
@@ -66,11 +69,12 @@ const authMiddleware = async (req: AuthenticatedRequest, res: Response, next: Ne
       return;
     }
 
-    // Attach user to the request object
+    // Attach user information to the request object
     req.user = user;
+    logger.info(`User authenticated: ${user.email}`);
     next();
   } catch (err: any) {
-    logger.warn('Invalid JWT token:', err.message);
+    logger.warn(`Forbidden access attempt to ${req.originalUrl}: Invalid token.`);
     res.status(403).json({ 
       success: false,
       error: 'Forbidden: Invalid token.' 

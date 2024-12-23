@@ -1,4 +1,4 @@
-// src/routes/userRoutes.ts ⭐️⭐️⭐️
+// src/routes/userRoutes.ts
 
 import express, { Request, Response, NextFunction, Router } from 'express';
 import { body, ValidationChain, validationResult } from 'express-validator';
@@ -14,11 +14,17 @@ import {
   getUserBankAccountsDetailed,
   getUserAccountData,
 } from '../controllers/userController';
-import authMiddleware from '../middleware/authMiddleware';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import logger from '../services/logger';
 
-const router: Router = express.Router();
+const publicRouter: Router = express.Router();
+const protectedRouter: Router = express.Router();
+
+// Debug logging middleware for public routes
+publicRouter.use((req: Request, res: Response, next: NextFunction) => {
+  logger.debug(`Public route accessed: ${req.method} ${req.path}`);
+  next();
+});
 
 /**
  * Custom validation middleware
@@ -115,32 +121,52 @@ const loginValidation: ValidationChain[] = [
 /**
  * Public routes
  */
-router.post(
+publicRouter.post(
   '/register-initial',
+  (req: Request, res: Response, next: NextFunction) => {
+    logger.debug('Attempting to access /register-initial route');
+    next();
+  },
   validate(initialRegistrationValidation),
   registerInitial
 );
 
-router.post(
+publicRouter.post(
   '/verify-otp',
+  (req: Request, res: Response, next: NextFunction) => {
+    logger.debug('Attempting to access /verify-otp route');
+    next();
+  },
   validate(verifyOtpValidation),
   verifyOTP
 );
 
-router.post(
+publicRouter.post(
   '/resend-otp',
+  (req: Request, res: Response, next: NextFunction) => {
+    logger.debug('Attempting to access /resend-otp route');
+    next();
+  },
   validate(resendOtpValidation),
   resendOtp
 );
 
-router.post(
+publicRouter.post(
   '/register-complete',
+  (req: Request, res: Response, next: NextFunction) => {
+    logger.debug('Attempting to access /register-complete route');
+    next();
+  },
   validate(completeRegistrationValidation),
   registerComplete
 );
 
-router.post(
+publicRouter.post(
   '/login',
+  (req: Request, res: Response, next: NextFunction) => {
+    logger.debug('Attempting to access /login route');
+    next();
+  },
   validate(loginValidation),
   loginUser
 );
@@ -148,56 +174,26 @@ router.post(
 /**
  * Protected routes
  */
-router.use(authMiddleware);
-
-router.get('/profile', (req: Request, res: Response, next: NextFunction) => {
-  const authReq = req as AuthenticatedRequest;
-  fetchUserProfile(authReq, res, next);
-});
-
-router.get('/status/:userId', (req: Request, res: Response) => {
-  getUserStatus(req, res);
-});
+protectedRouter.get('/profile', fetchUserProfile);
+protectedRouter.get('/status/:userId', getUserStatus);
+protectedRouter.get('/bank-accounts', getUserBankAccounts);
+protectedRouter.get('/bank-accounts/detailed', getUserBankAccountsDetailed);
+protectedRouter.get('/account-data', getUserAccountData);
 
 /**
- * Get User Bank Accounts (Summary)
- * GET /api/users/bank-accounts
+ * Error handling middleware for user routes
  */
-router.get(
-  '/bank-accounts',
-  async (req: Request, res: Response, next: NextFunction) => {
-    await getUserBankAccounts(req, res);
-  }
-);
-
-/**
- * Get Detailed User Bank Accounts
- * GET /api/users/bank-accounts/detailed
- */
-router.get(
-  '/bank-accounts/detailed',
-  async (req: Request, res: Response, next: NextFunction) => {
-    await getUserBankAccountsDetailed(req, res);
-  }
-);
-
-/**
- * Get User Account Data
- * GET /api/users/account-data
- */
-router.get('/account-data', authMiddleware, getUserAccountData);
-
-/**
- * Error handling middleware
- */
-router.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  logger.error('Unhandled Error:', err.message);
+const errorHandler = (err: Error, req: Request, res: Response, next: NextFunction) => {
+  logger.error('Unhandled Error in User Routes:', err.message);
   res.status(500).json({
     success: false,
     error: 'Internal server error',
     details: process.env.NODE_ENV === 'development' ? err.message : undefined,
   });
-});
+};
 
-export default router;
+publicRouter.use(errorHandler);
+protectedRouter.use(errorHandler);
+
+export { publicRouter as publicUserRoutes, protectedRouter as protectedUserRoutes };
 

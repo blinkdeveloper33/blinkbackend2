@@ -715,6 +715,114 @@ const getUserAccountData = async (req: AuthenticatedRequest, res: Response): Pro
   }
 };
 
+const updateProfilePicture = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+  const file = req.body.file;
+
+  try {
+    // Add debug logging
+    logger.debug('Received file data:', {
+      hasFile: !!file,
+      fileStart: file ? file.substring(0, 50) : 'no file',
+      userId
+    });
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized: User not found.'
+      });
+      return;
+    }
+
+    // More permissive file validation
+    if (!file || (!file.startsWith('data:image') && !file.includes('base64,'))) {
+      logger.error('File validation failed:', {
+        hasFile: !!file,
+        fileStart: file ? file.substring(0, 50) : 'no file'
+      });
+      res.status(400).json({
+        success: false,
+        error: 'Invalid file format. Please upload an image in base64 format.'
+      });
+      return;
+    }
+
+    // Extract base64 data more safely
+    const base64Data = file.includes('base64,') 
+      ? file.split('base64,')[1]
+      : file;
+
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    // Validate buffer size
+    if (buffer.length > 5 * 1024 * 1024) { // 5MB limit
+      res.status(400).json({
+        success: false,
+        error: 'File too large. Maximum size is 5MB.'
+      });
+      return;
+    }
+
+    // Generate unique filename
+    const filename = `${userId}-${Date.now()}.jpg`;
+
+    // Upload to Supabase Storage
+    const { data: uploadData, error: uploadError } = await supabase
+      .storage
+      .from('profile-pictures')
+      .upload(filename, buffer, {
+        contentType: 'image/jpeg',
+        upsert: true
+      });
+
+    if (uploadError) {
+      throw new Error(`Upload failed: ${uploadError.message}`);
+    }
+
+    // Get public URL
+    const { data: { publicUrl } } = supabase
+      .storage
+      .from('profile-pictures')
+      .getPublicUrl(filename);
+
+    // Update user record
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({
+        profile_picture_url: publicUrl,
+        profile_picture_updated_at: new Date().toISOString()
+      })
+      .eq('id', userId);
+
+    if (updateError) {
+      throw new Error(`Failed to update user record: ${updateError.message}`);
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        profilePictureUrl: publicUrl
+      }
+    });
+
+  } catch (error: any) {
+    logger.error('Update Profile Picture Error:', {
+      message: error.message,
+      stack: error.stack,
+      userId,
+      fileReceived: !!req.body.file,
+      fileType: req.body.file ? typeof req.body.file : 'none'
+    });
+    
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update profile picture.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 export {
   registerInitial,
   verifyOTP,
@@ -726,5 +834,6 @@ export {
   getUserBankAccounts,
   getUserBankAccountsDetailed,
   getUserAccountData,
+  updateProfilePicture,
 };
 

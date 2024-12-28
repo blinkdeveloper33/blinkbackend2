@@ -13,6 +13,7 @@ import {
   getUserBankAccounts,
   getUserBankAccountsDetailed,
   getUserAccountData,
+  updateProfilePicture,
 } from '../controllers/userController';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import logger from '../services/logger';
@@ -179,6 +180,19 @@ protectedRouter.get('/status/:userId', getUserStatus);
 protectedRouter.get('/bank-accounts', getUserBankAccounts);
 protectedRouter.get('/bank-accounts/detailed', getUserBankAccountsDetailed);
 protectedRouter.get('/account-data', getUserAccountData);
+
+// Update profile picture
+protectedRouter.post(
+  '/profile-picture',
+  validate([
+    body('file')
+      .notEmpty()
+      .withMessage('File is required')
+      .isString()
+      .withMessage('File must be a base64 string')
+  ]),
+  updateProfilePicture
+);
 
 /**
  * Error handling middleware for user routes

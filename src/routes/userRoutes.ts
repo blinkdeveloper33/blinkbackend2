@@ -14,6 +14,7 @@ import {
   getUserBankAccountsDetailed,
   getUserAccountData,
   updateProfilePicture,
+  getProfilePictureUrl,
 } from '../controllers/userController';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import logger from '../services/logger';
@@ -180,6 +181,9 @@ protectedRouter.get('/status/:userId', getUserStatus);
 protectedRouter.get('/bank-accounts', getUserBankAccounts);
 protectedRouter.get('/bank-accounts/detailed', getUserBankAccountsDetailed);
 protectedRouter.get('/account-data', getUserAccountData);
+
+// Get profile picture URL
+protectedRouter.get('/profile-picture', getProfilePictureUrl);
 
 // Update profile picture
 protectedRouter.post(

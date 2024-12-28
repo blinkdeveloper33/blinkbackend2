@@ -715,48 +715,46 @@ const getUserAccountData = async (req: AuthenticatedRequest, res: Response): Pro
   }
 };
 
+/**
+ * Updates the user's profile picture.
+ */
 const updateProfilePicture = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const userId = req.user?.id;
   const file = req.body.file;
 
   try {
-    // Add debug logging
-    logger.debug('Received file data:', {
-      hasFile: !!file,
-      fileStart: file ? file.substring(0, 50) : 'no file',
-      userId
-    });
-
     if (!userId) {
       res.status(401).json({
         success: false,
-        error: 'Unauthorized: User not found.'
+        error: 'Unauthorized: User not found'
       });
       return;
     }
 
-    // More permissive file validation
-    if (!file || (!file.startsWith('data:image') && !file.includes('base64,'))) {
-      logger.error('File validation failed:', {
-        hasFile: !!file,
-        fileStart: file ? file.substring(0, 50) : 'no file'
-      });
+    if (!file || typeof file !== 'string') {
       res.status(400).json({
         success: false,
-        error: 'Invalid file format. Please upload an image in base64 format.'
+        error: 'Invalid file format. Please provide a base64 encoded image.'
       });
       return;
     }
 
-    // Extract base64 data more safely
-    const base64Data = file.includes('base64,') 
-      ? file.split('base64,')[1]
-      : file;
+    // Extract the base64 data and file type
+    const matches = file.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid base64 format'
+      });
+      return;
+    }
 
+    const fileType = matches[1];
+    const base64Data = matches[2];
     const buffer = Buffer.from(base64Data, 'base64');
 
-    // Validate buffer size
-    if (buffer.length > 5 * 1024 * 1024) { // 5MB limit
+    // Validate file size (5MB limit)
+    if (buffer.length > 5 * 1024 * 1024) {
       res.status(400).json({
         success: false,
         error: 'File too large. Maximum size is 5MB.'
@@ -764,15 +762,25 @@ const updateProfilePicture = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
-    // Generate unique filename
-    const filename = `${userId}-${Date.now()}.jpg`;
+    // Validate file type
+    if (!['image/jpeg', 'image/png', 'image/jpg'].includes(fileType)) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid file type. Only JPEG, JPG and PNG are allowed.'
+      });
+      return;
+    }
+
+    // Generate unique filename with proper extension
+    const extension = fileType.split('/')[1];
+    const filename = `${userId}-${Date.now()}.${extension}`;
 
     // Upload to Supabase Storage
     const { data: uploadData, error: uploadError } = await supabase
       .storage
       .from('profile-pictures')
       .upload(filename, buffer, {
-        contentType: 'image/jpeg',
+        contentType: fileType,
         upsert: true
       });
 
@@ -780,17 +788,34 @@ const updateProfilePicture = async (req: AuthenticatedRequest, res: Response): P
       throw new Error(`Upload failed: ${uploadError.message}`);
     }
 
-    // Get public URL
+    // Get the public URL
     const { data: { publicUrl } } = supabase
       .storage
       .from('profile-pictures')
       .getPublicUrl(filename);
 
-    // Update user record
+    // Delete old profile picture if exists
+    const { data: userData } = await supabase
+      .from('users')
+      .select('profile_picture_url')
+      .eq('id', userId)
+      .single();
+
+    if (userData?.profile_picture_url) {
+      const oldFilename = userData.profile_picture_url.split('/').pop();
+      if (oldFilename) {
+        await supabase
+          .storage
+          .from('profile-pictures')
+          .remove([oldFilename]);
+      }
+    }
+
+    // Update user record with new profile picture URL
     const { error: updateError } = await supabase
       .from('users')
       .update({
-        profile_picture_url: publicUrl,
+        profile_picture_url: filename,
         profile_picture_updated_at: new Date().toISOString()
       })
       .eq('id', userId);
@@ -807,17 +832,68 @@ const updateProfilePicture = async (req: AuthenticatedRequest, res: Response): P
     });
 
   } catch (error: any) {
-    logger.error('Update Profile Picture Error:', {
-      message: error.message,
-      stack: error.stack,
-      userId,
-      fileReceived: !!req.body.file,
-      fileType: req.body.file ? typeof req.body.file : 'none'
-    });
-    
+    logger.error('Update Profile Picture Error:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to update profile picture.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+/**
+ * Gets the profile picture URL for the authenticated user.
+ */
+const getProfilePictureUrl = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: 'User not authenticated'
+      });
+      return;
+    }
+
+    // Get the user's profile picture filename from the users table
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('profile_picture_url')
+      .eq('id', userId)
+      .single();
+
+    if (userError) {
+      throw new Error('Error fetching user profile: ' + userError.message);
+    }
+
+    if (!user?.profile_picture_url) {
+      res.status(200).json({
+        success: true,
+        data: {
+          url: null
+        }
+      });
+      return;
+    }
+
+    // Get the public URL for the profile picture
+    const { data: { publicUrl } } = supabase
+      .storage
+      .from('profile-pictures')
+      .getPublicUrl(user.profile_picture_url);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        url: publicUrl
+      }
+    });
+  } catch (error: any) {
+    logger.error('Get Profile Picture URL Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get profile picture URL.',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
@@ -835,5 +911,6 @@ export {
   getUserBankAccountsDetailed,
   getUserAccountData,
   updateProfilePicture,
+  getProfilePictureUrl,
 };
 

@@ -39,6 +39,58 @@ const configuration = new Configuration({
 
 const plaidClient = new PlaidApi(configuration);
 
+// Add this interface at the top of the file with other interfaces
+interface SpendingSegment {
+  date: string;
+  spending: number;
+}
+
+// Add these type definitions at the top of the file with other interfaces
+type FrequencyType = 'WEEKLY' | 'BI_WEEKLY' | 'MONTHLY' | 'QUARTERLY' | 'ANNUAL';
+
+interface RecurringExpense {
+  merchant: string;
+  frequency: FrequencyType;
+  averageAmount: number;
+  recentAmount: number;
+  hasUnusualChange: boolean;
+  amountChangePercent: number;
+  lastDate: string;
+  nextExpectedDate: string;
+  transactionCount: number;
+  category: string;
+  confidence: number;
+  transactions: Array<{
+    date: string;
+    amount: number;
+    description: string;
+  }>;
+}
+
+// Add these interfaces at the top of the file with other interfaces
+interface BankAccountDetails {
+  account_name: string;
+  account_type: string;
+  account_subtype: string | null;
+  account_mask: string | null;
+}
+
+interface TransactionWithBankAccount {
+  id: string;
+  transaction_id: string;
+  amount: number;
+  date: string;
+  description: string;
+  original_description: string | null;
+  category: string | null;
+  category_detailed: string | null;
+  merchant_name: string | null;
+  pending: boolean | null;
+  created_at: string;
+  account_id: string;
+  bank_accounts: BankAccountDetails;
+}
+
 /**
  * Handles Plaid webhook events.
  * @param req - Express Request object
@@ -139,7 +191,7 @@ export const createLinkToken = async (req: Request, res: Response): Promise<void
     const { userId } = req.body;
     const request = {
       user: { client_user_id: userId },
-      client_name: config.CLIENT_NAME || 'Blink Finances',
+      client_name: config.CLIENT_NAME || 'Blink',
       products: [Products.Transactions],
       country_codes: [CountryCode.Us], // Fixed: Changed US to Us
       language: 'en',
@@ -488,58 +540,48 @@ export const getTransactions = async (req: Request, res: Response): Promise<void
  * @param req - Express Request object
  * @param res - Express Response object
  */
-export const getRecentTransactions = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { userId } = req.params;
+export const getRecentTransactions = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const userId = req.params.userId;
 
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User ID not provided.',
+    });
+    return;
+  }
+
+  try {
+    // Fetch only the last 7 transactions
     const { data: transactions, error } = await supabase
       .from('transactions')
-      .select(`
-        id,
-        bank_account_id,
-        transaction_id,
-        amount,
-        date,
-        description,
-        original_description,
-        category,
-        category_detailed,
-        merchant_name,
-        pending,
-        created_at,
-        account_id,
-        user_id
-      `)
+      .select('*')
       .eq('user_id', userId)
       .order('date', { ascending: false })
-      .limit(5);
+      .limit(7);  // Limit to 7 transactions
 
-    if (error) throw new Error('Error fetching recent transactions: ' + error.message);
+    if (error) throw new Error('Error fetching transactions: ' + error.message);
 
-    // Ensure all fields are properly formatted
-    const formattedTransactions = transactions.map((t: any) => ({
-      ...t,
-      amount: Number(t.amount),
-      date: t.date || null,
-      description: t.description || '',
-      original_description: t.original_description || '',
-      category: t.category || '',
-      category_detailed: t.category_detailed || '',
-      merchant_name: t.merchant_name || '',
-      pending: Boolean(t.pending),
-      created_at: t.created_at || null,
+    // Transform transactions for frontend display
+    const transformedTransactions = transactions.map(tx => ({
+      ...tx,
+      // Convert amount for frontend display:
+      // - Positive amounts (expenses) should be negative in frontend
+      // - Negative amounts (income) should be positive in frontend
+      amount: tx.amount > 0 ? -tx.amount : Math.abs(tx.amount)
     }));
 
     res.status(200).json({
       success: true,
-      transactions: formattedTransactions,
+      transactions: transformedTransactions
     });
+
   } catch (error: any) {
     logger.error('Get Recent Transactions Error:', error.message);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to retrieve recent transactions', 
-      details: error.message 
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve recent transactions.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -602,20 +644,10 @@ export const getCurrentBalances = async (req: Request, res: Response): Promise<v
  */
 export const getAllTransactions = async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = (req as any).user.id; // Assuming authMiddleware sets req.user
+    const userId = (req as any).user.id;
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = parseInt(req.query.pageSize as string) || 100;
     const offset = (page - 1) * pageSize;
-
-    // Fetch total count of transactions
-    const { count, error: countError } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId);
-
-    if (countError) {
-      throw new Error('Error fetching transaction count: ' + countError.message);
-    }
 
     // Fetch transactions with pagination
     const { data: transactions, error } = await supabase
@@ -629,17 +661,24 @@ export const getAllTransactions = async (req: Request, res: Response): Promise<v
       throw new Error('Error fetching transactions: ' + error.message);
     }
 
-    const totalPages = Math.ceil((count || 0) / pageSize);
+    // Transform transactions for frontend display
+    const transformedTransactions = transactions.map(tx => ({
+      ...tx,
+      // Convert amount for frontend display:
+      // - Positive amounts (expenses) should be negative in frontend
+      // - Negative amounts (income) should be positive in frontend
+      amount: tx.amount > 0 ? -tx.amount : Math.abs(tx.amount)
+    }));
 
     res.status(200).json({
       success: true,
       data: {
-        transactions,
+        transactions: transformedTransactions,
         pagination: {
           page,
           pageSize,
-          totalPages,
-          totalCount: count
+          totalPages: Math.ceil((transactions.length || 0) / pageSize),
+          totalCount: transactions.length
         }
       }
     });
@@ -647,8 +686,7 @@ export const getAllTransactions = async (req: Request, res: Response): Promise<v
     logger.error('Get All Transactions Error:', error.message);
     res.status(500).json({ 
       success: false, 
-      error: 'Failed to retrieve transactions', 
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined 
+      error: 'Failed to retrieve transactions'
     });
   }
 };
@@ -668,29 +706,35 @@ export const getDailyTransactionSummary = async (req: AuthenticatedRequest, res:
   }
 
   try {
-    // Calculate the date 15 days ago
-    const fifteenDaysAgo = new Date();
-    fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 14); // 14 because we want to include today
-
-    // Fetch transactions for the last 15 days
+    // Fetch the most recent transactions first
     const { data: transactions, error } = await supabase
       .from('transactions')
       .select('amount, date')
       .eq('user_id', userId)
-      .gte('date', fifteenDaysAgo.toISOString().split('T')[0])
-      .order('date', { ascending: false });
+      .order('date', { ascending: false })
+      .limit(50); // Get the last 50 transactions to ensure we have enough data
 
     if (error) {
       throw new Error('Error fetching transactions: ' + error.message);
     }
 
+    if (!transactions || transactions.length === 0) {
+      res.status(200).json({
+        success: true,
+        data: [],
+      });
+      return;
+    }
+
     // Group transactions by date and calculate summaries
+    // Convert amounts: positive in DB (outflow) becomes negative, negative in DB (inflow) becomes positive
     const dailySummaries = transactions.reduce((acc: any, transaction: any) => {
       const date = transaction.date;
       if (!acc[date]) {
         acc[date] = { totalAmount: 0, transactionCount: 0 };
       }
-      acc[date].totalAmount += transaction.amount;
+      // Invert the amount: outflows (positive in DB) become negative, inflows (negative in DB) become positive
+      acc[date].totalAmount += transaction.amount > 0 ? -transaction.amount : Math.abs(transaction.amount);
       acc[date].transactionCount += 1;
       return acc;
     }, {});
@@ -705,9 +749,12 @@ export const getDailyTransactionSummary = async (req: AuthenticatedRequest, res:
     // Sort by date descending
     formattedSummaries.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+    // Take only the first 15 days of data
+    const limitedSummaries = formattedSummaries.slice(0, 15);
+
     res.status(200).json({
       success: true,
-      data: formattedSummaries,
+      data: limitedSummaries,
     });
   } catch (error: any) {
     logger.error('Get Daily Transaction Summary Error:', error.message);
@@ -736,10 +783,10 @@ export const getSpendingSummary = async (req: AuthenticatedRequest, res: Respons
     return;
   }
 
-  if (!['week', 'month', 'QTD', 'year'].includes(timeFrame)) {
+  if (!['LAST_WEEK', 'LAST_MONTH', 'LAST_QUARTER', 'LAST_YEAR'].includes(timeFrame)) {
     res.status(400).json({
       success: false,
-      error: 'Invalid time frame. Must be week, month, QTD, or year.',
+      error: 'Invalid time frame. Must be LAST_WEEK, LAST_MONTH, LAST_QUARTER, or LAST_YEAR.',
     });
     return;
   }
@@ -769,28 +816,29 @@ export const getSpendingSummary = async (req: AuthenticatedRequest, res: Respons
       return acc;
     }, {});
 
-    const formattedSummary = Object.entries(categorySummary).map(([category, summary]: [string, any]) => ({
+    // Format the response
+    const formattedCategories = Object.entries(categorySummary).map(([category, summary]: [string, any]) => ({
       category,
       totalSpent: Number(summary.totalSpent.toFixed(2)),
       transactionCount: summary.transactionCount,
     }));
 
-    const totalSpending = formattedSummary.reduce((sum, category) => sum + category.totalSpent, 0);
-    const totalTransactions = formattedSummary.reduce((sum, category) => sum + category.transactionCount, 0);
+    // Sort by total spent descending
+    formattedCategories.sort((a: any, b: any) => b.totalSpent - a.totalSpent);
 
     res.status(200).json({
       success: true,
       data: {
         timeFrame,
-        startDate: startDate.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0],
-        totalSpending: Number(totalSpending.toFixed(2)),
-        totalTransactions,
-        categorySummary: formattedSummary,
+        period: {
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+        },
+        categories: formattedCategories,
       },
     });
   } catch (error: any) {
-    logger.error('Get Spending Summary Error:', error.message);
+    logger.error('Get Spending Summary Error:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to retrieve spending summary.',
@@ -800,10 +848,9 @@ export const getSpendingSummary = async (req: AuthenticatedRequest, res: Respons
 };
 
 /**
- * Get transaction category analysis for the authenticated user
- * @param req - Express Request object
- * @param res - Express Response object
- */
+* Get transaction category analysis
+* GET /api/plaid/transaction-category-analysis?timeFrame=LAST_WEEK|LAST_MONTH|LAST_QUARTER|LAST_YEAR
+*/
 export const getTransactionCategoryAnalysis = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const userId = req.user?.id;
   const timeFrame = req.query.timeFrame as string;
@@ -816,10 +863,10 @@ export const getTransactionCategoryAnalysis = async (req: AuthenticatedRequest, 
     return;
   }
 
-  if (!['1year', 'YTD', '6months', 'quarter', 'QTD', 'month', 'MTD', 'week', 'WTD'].includes(timeFrame)) {
+  if (!['LAST_WEEK', 'LAST_MONTH', 'LAST_QUARTER', 'LAST_YEAR'].includes(timeFrame)) {
     res.status(400).json({
       success: false,
-      error: 'Invalid time frame. Must be 1year, YTD, 6months, quarter, QTD, month, MTD, week, or WTD.',
+      error: 'Invalid time frame. Must be LAST_WEEK, LAST_MONTH, LAST_QUARTER, or LAST_YEAR.',
     });
     return;
   }
@@ -849,30 +896,29 @@ export const getTransactionCategoryAnalysis = async (req: AuthenticatedRequest, 
       return acc;
     }, {});
 
-    const totalSpending = Object.values(categorySummary).reduce((sum: number, category) => sum + category.totalSpent, 0);
-
-    const formattedSummary = Object.entries(categorySummary).map(([category, summary]: [string, any]) => ({
-      name: category,
-      amount: Number(summary.totalSpent.toFixed(2)),
-      percentage: Number(((summary.totalSpent / totalSpending) * 100).toFixed(2)),
+    // Format the response
+    const formattedCategories = Object.entries(categorySummary).map(([category, summary]) => ({
+      category,
+      totalSpent: Number(summary.totalSpent.toFixed(2)),
       transactionCount: summary.transactionCount,
     }));
 
-    // Sort categories by amount spent (descending)
-    formattedSummary.sort((a, b) => b.amount - a.amount);
+    // Sort by total spent descending
+    formattedCategories.sort((a, b) => b.totalSpent - a.totalSpent);
 
     res.status(200).json({
       success: true,
       data: {
         timeFrame,
-        startDate: startDate.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0],
-        totalSpending: Number(totalSpending.toFixed(2)),
-        categories: formattedSummary,
+        period: {
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+        },
+        categories: formattedCategories,
       },
     });
   } catch (error: any) {
-    logger.error('Get Transaction Category Analysis Error:', error.message);
+    logger.error('Get Transaction Category Analysis Error:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to retrieve transaction category analysis.',
@@ -882,48 +928,1220 @@ export const getTransactionCategoryAnalysis = async (req: AuthenticatedRequest, 
 };
 
 /**
- * Calculate date range based on time frame
- * @param timeFrame - '1year', 'YTD', '6months', 'quarter', 'QTD', 'month', 'MTD', 'week', or 'WTD'
- * @returns Object with startDate and endDate
+ * Helper function to calculate date range based on timeFrame
  */
 function calculateDateRange(timeFrame: string): { startDate: Date; endDate: Date } {
-  const endDate = new Date();
-  let startDate = new Date();
+  // Get current date in local timezone and set to start of day
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  
+  // Set end date to end of current day
+  const endDate = new Date(now);
+  endDate.setHours(23, 59, 59, 999);
+  
+  // Initialize start date with current date
+  const startDate = new Date(now);
 
   switch (timeFrame) {
-    case '1year':
-      startDate.setFullYear(endDate.getFullYear() - 1);
+    case 'LAST_WEEK':
+      startDate.setDate(startDate.getDate() - 7); // Last 7 days
       break;
-    case 'YTD':
-      startDate = new Date(endDate.getFullYear(), 0, 1); // January 1st of current year
+
+    case 'LAST_MONTH':
+      startDate.setDate(startDate.getDate() - 28); // Last 4 weeks
       break;
-    case '6months':
-      startDate.setMonth(endDate.getMonth() - 6);
+
+    case 'LAST_QUARTER':
+      startDate.setMonth(startDate.getMonth() - 3); // Last 3 months
       break;
-    case 'quarter':
-      startDate.setMonth(endDate.getMonth() - 3);
+
+    case 'LAST_YEAR':
+      startDate.setFullYear(startDate.getFullYear() - 1); // Last 12 months
       break;
-    case 'QTD':
-      const quarterStartMonth = Math.floor(endDate.getMonth() / 3) * 3;
-      startDate = new Date(endDate.getFullYear(), quarterStartMonth, 1);
-      break;
-    case 'month':
-      startDate.setMonth(endDate.getMonth() - 1);
-      break;
-    case 'MTD':
-      startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
-      break;
-    case 'week':
-      startDate.setDate(endDate.getDate() - 7);
-      break;
-    case 'WTD':
-      const day = endDate.getDay();
-      startDate.setDate(endDate.getDate() - day + (day === 0 ? -6 : 1)); // Adjust for Sunday
-      break;
+
     default:
-      throw new Error('Invalid time frame');
+      throw new Error(`Invalid timeFrame: ${timeFrame}`);
   }
+
+  logger.debug(`Date range calculated for ${timeFrame}:`, {
+    timeFrame,
+    startDate: startDate.toISOString(),
+    endDate: endDate.toISOString(),
+    explanation: `Showing data from ${startDate.toLocaleDateString()} to ${endDate.toLocaleDateString()}`
+  });
 
   return { startDate, endDate };
 }
+
+/**
+ * Get detailed information about a specific transaction
+ * GET /api/plaid/transactions/:transactionId
+ */
+export const getTransactionDetails = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+  const transactionId = req.params.transactionId;
+
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User not found.'
+    });
+    return;
+  }
+
+  try {
+    // Fetch detailed transaction information with bank account details
+    const { data: transaction, error } = await supabase
+      .from('transactions')
+      .select(`
+        id,
+        transaction_id,
+        amount,
+        date,
+        description,
+        original_description,
+        category,
+        category_detailed,
+        merchant_name,
+        pending,
+        created_at,
+        account_id,
+        bank_accounts!inner (
+          account_name,
+          account_type,
+          account_subtype,
+          account_mask
+        )
+      `)
+      .eq('id', transactionId)
+      .eq('user_id', userId)
+      .single() as { data: TransactionWithBankAccount | null, error: any };
+
+    if (error) {
+      throw new Error('Error fetching transaction details: ' + error.message);
+    }
+
+    if (!transaction) {
+      res.status(404).json({
+        success: false,
+        error: 'Transaction not found'
+      });
+      return;
+    }
+
+    // Get the bank account details
+    const bankAccount = transaction.bank_accounts;
+
+    // Format the response
+    const formattedTransaction = {
+      id: transaction.id,
+      transactionId: transaction.transaction_id,
+      amount: transaction.amount > 0 ? -transaction.amount : Math.abs(transaction.amount), // Convert for frontend display
+      date: transaction.date,
+      description: transaction.description,
+      originalDescription: transaction.original_description || null,
+      category: transaction.category || 'Uncategorized',
+      categoryDetailed: transaction.category_detailed || null,
+      merchantName: transaction.merchant_name || null,
+      pending: transaction.pending || false,
+      accountDetails: {
+        id: transaction.account_id,
+        name: bankAccount.account_name,
+        type: bankAccount.account_type,
+        subtype: bankAccount.account_subtype || null,
+        mask: bankAccount.account_mask || null
+      },
+      createdAt: transaction.created_at
+    };
+
+    res.status(200).json({
+      success: true,
+      data: formattedTransaction
+    });
+  } catch (error: any) {
+    logger.error('Get Transaction Details Error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve transaction details',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+/**
+ * Helper function to standardize category names to match frontend expectations
+ */
+function standardizeCategory(category: string): string {
+  // Map to match frontend's expected category names exactly
+  const categoryMap: { [key: string]: string } = {
+    // Food & Dining
+    'FOOD_AND_DRINK': 'Food & Dining',
+    'FOOD_AND_BEVERAGE': 'Food & Dining',
+    'RESTAURANTS': 'Food & Dining',
+    'DINING': 'Food & Dining',
+    'GROCERIES': 'Food & Dining',
+    'COFFEE': 'Food & Dining',
+    
+    // Shopping
+    'SHOPPING': 'Shopping',
+    'GENERAL_MERCHANDISE': 'Shopping',
+    'CLOTHING': 'Shopping',
+    'ELECTRONICS': 'Shopping',
+    'RETAIL': 'Shopping',
+    
+    // Transportation
+    'TRANSPORTATION': 'Transportation',
+    'TAXI': 'Transportation',
+    'UBER': 'Transportation',
+    'LYFT': 'Transportation',
+    'PUBLIC_TRANSPORTATION': 'Transportation',
+    'PARKING': 'Transportation',
+    'GAS': 'Transportation',
+    'AUTOMOTIVE': 'Transportation',
+    
+    // Travel
+    'TRAVEL': 'Travel',
+    'AIRLINES': 'Travel',
+    'HOTELS': 'Travel',
+    'RENTAL_CAR': 'Travel',
+    'VACATION': 'Travel',
+    
+    // Utilities
+    'UTILITIES': 'Utilities',
+    'RENT': 'Utilities',
+    'MORTGAGE': 'Utilities',
+    'ELECTRICITY': 'Utilities',
+    'GAS_AND_ELECTRIC': 'Utilities',
+    'WATER': 'Utilities',
+    'INTERNET': 'Utilities',
+    'PHONE': 'Utilities',
+    
+    // Entertainment
+    'ENTERTAINMENT': 'Entertainment',
+    'MOVIES': 'Entertainment',
+    'MUSIC': 'Entertainment',
+    'GAMES': 'Entertainment',
+    'SPORTS': 'Entertainment',
+    'STREAMING': 'Entertainment',
+    
+    // Health
+    'HEALTH': 'Health',
+    'MEDICAL': 'Health',
+    'PHARMACY': 'Health',
+    'FITNESS': 'Health',
+    'HEALTHCARE': 'Health',
+    'INSURANCE_MEDICAL': 'Health',
+    
+    // Others (will be used as fallback)
+    'OTHER': 'Others',
+    'MISCELLANEOUS': 'Others',
+    'UNCATEGORIZED': 'Others'
+  };
+
+  // Convert to uppercase and remove spaces/special chars for matching
+  const normalizedCategory = category?.toUpperCase()
+    .replace(/[^A-Z0-9]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '') || 'UNCATEGORIZED';
+  
+  // Return mapped category or Others as default
+  return categoryMap[normalizedCategory] || 'Others';
+}
+
+/**
+ * Get spending analysis for the Expense Breakdown widget
+ * GET /api/plaid/spending-analysis?timeFrame=LAST_WEEK|LAST_MONTH|LAST_QUARTER|LAST_YEAR
+ */
+export const getSpendingAnalysis = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const timeFrame = (req.query.timeFrame as string) || 'LAST_MONTH';
+
+    logger.debug(`Starting spending analysis for timeFrame: ${timeFrame}`, {
+      userId,
+      timeFrame
+    });
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized: User not found'
+      });
+      return;
+    }
+
+    // Validate timeFrame
+    if (!['LAST_WEEK', 'LAST_MONTH', 'LAST_QUARTER', 'LAST_YEAR'].includes(timeFrame)) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid timeFrame. Must be one of: LAST_WEEK, LAST_MONTH, LAST_QUARTER, LAST_YEAR'
+      });
+      return;
+    }
+
+    // Calculate date range based on selected time period
+    const { startDate, endDate } = calculateDateRange(timeFrame);
+
+    logger.debug('Date range for analysis:', {
+      timeFrame,
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString()
+    });
+
+    // Fetch transactions for the specified period with a single optimized query
+    const { data: transactions, error: txError } = await supabase
+      .from('transactions')
+      .select(`
+        amount,
+        category,
+        date
+      `)
+      .eq('user_id', userId)
+      .gt('amount', 0) // Only get expenses (positive amounts)
+      .gte('date', startDate.toISOString().split('T')[0])
+      .lte('date', endDate.toISOString().split('T')[0])
+      .order('date', { ascending: false });
+
+    if (txError) {
+      logger.error('Error fetching transactions:', txError);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch transactions'
+      });
+      return;
+    }
+
+    logger.debug('Transactions fetched:', {
+      count: transactions?.length || 0,
+      dateRange: `${startDate.toISOString()} to ${endDate.toISOString()}`
+    });
+
+    // Initialize category map for aggregating spending
+    const categoryMap = new Map<string, { amount: number; count: number }>();
+    let totalSpending = 0;
+
+    // Process transactions and aggregate by category
+    transactions?.forEach(tx => {
+      const amount = Math.abs(tx.amount);
+      const category = standardizeCategory(tx.category || 'Shopping');
+      
+      if (!categoryMap.has(category)) {
+        categoryMap.set(category, { amount: 0, count: 0 });
+      }
+      const categoryData = categoryMap.get(category)!;
+      categoryData.amount += amount;
+      categoryData.count += 1;
+      totalSpending += amount;
+    });
+
+    // Format categories with percentages and ensure proper sorting
+    const categories = Array.from(categoryMap.entries())
+      .map(([name, data]) => ({
+        name,
+        amount: Number(data.amount.toFixed(2)),
+        percentage: totalSpending > 0 
+          ? Number(((data.amount / totalSpending) * 100).toFixed(1))
+          : 0,
+        transactionCount: data.count
+      }))
+      .sort((a, b) => b.amount - a.amount);
+
+    // Calculate spending segments for the time period
+    const segments = calculateSpendingSegments(
+      transactions || [],
+      timeFrame,
+      startDate,
+      endDate
+    );
+
+    // Get historical spending data
+    const historicalSpending = await calculateHistoricalSpending(userId);
+
+    // Format the response to match the widget's expectations exactly
+    const response = {
+      success: true,
+      data: {
+        timeFrame,
+        totalSpending: Number(totalSpending.toFixed(2)),
+        categories,
+        period: {
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+          label: getPeriodLabel(timeFrame, startDate, endDate)
+        },
+        segments,
+        historicalSpending
+      }
+    };
+
+    logger.debug('Spending analysis response:', {
+      timeFrame,
+      totalSpending,
+      categoriesCount: categories.length,
+      segmentsCount: segments.length
+    });
+
+    res.status(200).json(response);
+  } catch (error: any) {
+    logger.error('Spending Analysis Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate spending analysis',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+/**
+ * Helper function to get a human-readable period label
+ */
+function getPeriodLabel(timeFrame: string, startDate: Date, endDate: Date): string {
+  const formatOptions: Intl.DateTimeFormatOptions = {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric'
+  };
+
+  const start = startDate.toLocaleDateString('en-US', formatOptions);
+  const end = endDate.toLocaleDateString('en-US', formatOptions);
+  
+  switch (timeFrame) {
+    case 'LAST_WEEK':
+      return `Last 7 Days (${start} - ${end})`;
+    case 'LAST_MONTH':
+      return `Last 4 Weeks (${start} - ${end})`;
+    case 'LAST_QUARTER':
+      return `Last 3 Months (${start} - ${end})`;
+    case 'LAST_YEAR':
+      return `Last 12 Months (${start} - ${end})`;
+    default:
+      return `${start} - ${end}`;
+  }
+}
+
+/**
+ * Helper function to calculate spending segments for trends
+ */
+function calculateSpendingSegments(
+  transactions: any[],
+  timeFrame: string,
+  startDate: Date,
+  endDate: Date
+): Array<SpendingSegment> {
+  const segments: SpendingSegment[] = [];
+  const segmentMap = new Map<string, number>();
+
+  // Initialize segments based on timeFrame
+  let currentDate = new Date(startDate);
+  const numSegments = getNumberOfSegments(timeFrame);
+  
+  // Create segments with proper dates
+  switch (timeFrame) {
+    case 'LAST_WEEK':
+    case 'LAST_MONTH':
+      // Daily segments
+      while (currentDate <= endDate && segments.length < numSegments) {
+        const segmentDate = currentDate.toISOString().split('T')[0];
+        segmentMap.set(segmentDate, 0);
+        segments.push({ date: segmentDate, spending: 0 });
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+      break;
+    
+    case 'LAST_QUARTER':
+      // Weekly segments
+      while (segments.length < numSegments) {
+        const segmentDate = currentDate.toISOString().split('T')[0];
+        segmentMap.set(segmentDate, 0);
+        segments.push({ date: segmentDate, spending: 0 });
+        currentDate.setDate(currentDate.getDate() + 7);
+      }
+      break;
+    
+    case 'LAST_YEAR':
+      // Monthly segments
+      while (segments.length < numSegments) {
+        const segmentDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
+          .toISOString().split('T')[0];
+        segmentMap.set(segmentDate, 0);
+        segments.push({ date: segmentDate, spending: 0 });
+        currentDate.setMonth(currentDate.getMonth() + 1);
+      }
+      break;
+  }
+
+  // Aggregate transactions into segments
+  transactions.forEach(tx => {
+    const amount = Math.abs(tx.amount);
+    if (amount <= 0) return; // Skip non-expenses
+
+    const txDate = new Date(tx.date);
+    let segmentDate = txDate.toISOString().split('T')[0]; // Initialize with transaction date
+
+    if (timeFrame === 'LAST_QUARTER') {
+      // Find the closest weekly segment
+      let matchingSegment = segments.find(segment => {
+        const segmentStart = new Date(segment.date);
+        const segmentEnd = new Date(segmentStart);
+        segmentEnd.setDate(segmentEnd.getDate() + 7);
+        return txDate >= segmentStart && txDate < segmentEnd;
+      });
+
+      if (!matchingSegment) return;
+      segmentDate = matchingSegment.date;
+    } else if (timeFrame === 'LAST_YEAR') {
+      // First day of the month
+      segmentDate = new Date(txDate.getFullYear(), txDate.getMonth(), 1)
+        .toISOString().split('T')[0];
+    }
+
+    if (segmentMap.has(segmentDate)) {
+      segmentMap.set(segmentDate, (segmentMap.get(segmentDate) || 0) + amount);
+    }
+  });
+
+  // Update segments with aggregated values and ensure proper formatting
+  return segments.map(segment => ({
+    date: segment.date,
+    spending: Number(segmentMap.get(segment.date)?.toFixed(2) || 0)
+  }));
+}
+
+function getNumberOfSegments(timeFrame: string): number {
+  switch (timeFrame) {
+    case 'LAST_WEEK': return 7;  // Daily for week
+    case 'LAST_MONTH': return 31; // Daily for month
+    case 'LAST_QUARTER': return 13; // Weekly for quarter
+    case 'LAST_YEAR': return 12; // Monthly for year
+    default: return 7;
+  }
+}
+
+function getSegmentInterval(timeFrame: string): { unit: 'day' | 'week' | 'month'; value: number } {
+  switch (timeFrame) {
+    case 'LAST_WEEK':
+    case 'LAST_MONTH':
+      return { unit: 'day', value: 1 };
+    case 'LAST_QUARTER':
+      return { unit: 'week', value: 1 };
+    case 'LAST_YEAR':
+      return { unit: 'month', value: 1 };
+    default:
+      return { unit: 'day', value: 1 };
+  }
+}
+
+function addToDate(date: Date, interval: { unit: 'day' | 'week' | 'month'; value: number }): Date {
+  const newDate = new Date(date);
+  switch (interval.unit) {
+    case 'day':
+      newDate.setDate(date.getDate() + interval.value);
+        break;
+    case 'week':
+      newDate.setDate(date.getDate() + (interval.value * 7));
+      break;
+    case 'month':
+      newDate.setMonth(date.getMonth() + interval.value);
+      break;
+  }
+  return newDate;
+}
+
+function getSegmentDate(date: Date, timeFrame: string): string {
+  const newDate = new Date(date);
+  switch (timeFrame) {
+    case 'LAST_WEEK':
+    case 'LAST_MONTH':
+      return newDate.toISOString().split('T')[0];
+    case 'LAST_QUARTER':
+      // Set to start of week
+      newDate.setDate(date.getDate() - date.getDay() + 1);
+      return newDate.toISOString().split('T')[0];
+    case 'LAST_YEAR':
+      // Set to first of month
+      newDate.setDate(1);
+      return newDate.toISOString().split('T')[0];
+    default:
+      return newDate.toISOString().split('T')[0];
+  }
+}
+
+/**
+ * Helper function to calculate historical spending data
+ */
+async function calculateHistoricalSpending(userId: string) {
+  const now = new Date();
+  
+  // Calculate date ranges
+  const lastWeekStart = new Date(now);
+  lastWeekStart.setDate(now.getDate() - 7);
+  
+  const lastMonthStart = new Date(now);
+  lastMonthStart.setMonth(now.getMonth() - 1);
+  
+  const lastQuarterStart = new Date(now);
+  lastQuarterStart.setMonth(now.getMonth() - 3);
+  
+  const lastYearStart = new Date(now);
+  lastYearStart.setFullYear(now.getFullYear() - 1);
+
+  // Fetch transactions for the last year (which covers all periods)
+  const { data: transactions, error } = await supabase
+    .from('transactions')
+    .select('amount, date')
+    .eq('user_id', userId)
+    .gt('amount', 0)
+    .gte('date', lastYearStart.toISOString().split('T')[0])
+    .lte('date', now.toISOString().split('T')[0])
+    .order('date', { ascending: false });
+
+  if (error) throw new Error('Error fetching historical transactions: ' + error.message);
+
+  const spending = {
+    lastWeek: { 
+      start: lastWeekStart.toISOString().split('T')[0], 
+      end: now.toISOString().split('T')[0], 
+      totalSpending: 0,
+      label: 'Last 7 Days'
+    },
+    lastMonth: { 
+      start: lastMonthStart.toISOString().split('T')[0], 
+      end: now.toISOString().split('T')[0], 
+      totalSpending: 0,
+      label: 'Last 30 Days'
+    },
+    lastQuarter: { 
+      start: lastQuarterStart.toISOString().split('T')[0], 
+      end: now.toISOString().split('T')[0], 
+      totalSpending: 0,
+      label: 'Last 90 Days'
+    },
+    lastYear: { 
+      start: lastYearStart.toISOString().split('T')[0], 
+      end: now.toISOString().split('T')[0], 
+      totalSpending: 0,
+      label: 'Last 365 Days'
+    }
+  };
+
+  if (!transactions) return spending;
+
+  transactions.forEach(tx => {
+    const txDate = new Date(tx.date);
+    const amount = Math.abs(tx.amount);
+
+    if (txDate >= lastWeekStart) spending.lastWeek.totalSpending += amount;
+    if (txDate >= lastMonthStart) spending.lastMonth.totalSpending += amount;
+    if (txDate >= lastQuarterStart) spending.lastQuarter.totalSpending += amount;
+    spending.lastYear.totalSpending += amount;
+  });
+
+  // Round all totals to 2 decimal places
+  Object.values(spending).forEach(period => {
+    period.totalSpending = Number(period.totalSpending.toFixed(2));
+  });
+
+  return spending;
+}
+
+/**
+ * Get historical spending totals for different time periods
+ * GET /api/plaid/historical-spending
+ */
+export const getHistoricalSpending = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized: User not found.'
+      });
+      return;
+    }
+
+    // Calculate date ranges
+    const now = new Date();
+    const lastWeekStart = new Date(now);
+    lastWeekStart.setDate(now.getDate() - 7);
+    
+    const lastMonthStart = new Date(now);
+    lastMonthStart.setMonth(now.getMonth() - 1);
+    
+    const lastQuarterStart = new Date(now);
+    lastQuarterStart.setMonth(now.getMonth() - 3);
+    
+    const lastYearStart = new Date(now);
+    lastYearStart.setFullYear(now.getFullYear() - 1);
+
+    // Fetch transactions for the last year (which covers all periods)
+    const { data: transactions, error: txError } = await supabase
+      .from('transactions')
+      .select('amount, date')
+      .eq('user_id', userId)
+      .gt('amount', 0) // Only get expenses (positive amounts)
+      .gte('date', lastYearStart.toISOString().split('T')[0])
+      .lte('date', now.toISOString().split('T')[0])
+      .order('date', { ascending: false });
+
+    if (txError) throw new Error('Error fetching transactions: ' + txError.message);
+
+    // Initialize spending totals
+    const spending = {
+      lastWeek: 0,
+      lastMonth: 0,
+      lastQuarter: 0,
+      lastYear: 0
+    };
+
+    // Calculate totals for each period
+    transactions.forEach(tx => {
+      const txDate = new Date(tx.date);
+      const amount = Math.max(0, tx.amount); // Ensure positive amount
+
+      // Add to relevant period totals
+      if (txDate >= lastWeekStart) {
+        spending.lastWeek += amount;
+      }
+      if (txDate >= lastMonthStart) {
+        spending.lastMonth += amount;
+      }
+      if (txDate >= lastQuarterStart) {
+        spending.lastQuarter += amount;
+      }
+      spending.lastYear += amount;
+    });
+
+    // Format response with rounded numbers
+    const response = {
+      success: true,
+      data: {
+        periods: {
+          lastWeek: {
+            start: lastWeekStart.toISOString().split('T')[0],
+            end: now.toISOString().split('T')[0],
+            totalSpending: Number(spending.lastWeek.toFixed(2))
+          },
+          lastMonth: {
+            start: lastMonthStart.toISOString().split('T')[0],
+            end: now.toISOString().split('T')[0],
+            totalSpending: Number(spending.lastMonth.toFixed(2))
+          },
+          lastQuarter: {
+            start: lastQuarterStart.toISOString().split('T')[0],
+            end: now.toISOString().split('T')[0],
+            totalSpending: Number(spending.lastQuarter.toFixed(2))
+          },
+          lastYear: {
+            start: lastYearStart.toISOString().split('T')[0],
+            end: now.toISOString().split('T')[0],
+            totalSpending: Number(spending.lastYear.toFixed(2))
+          }
+        }
+      }
+    };
+
+    res.status(200).json(response);
+    return;
+  } catch (error: any) {
+    logger.error('Get Historical Spending Error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve historical spending.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      data: {
+        periods: {
+          lastWeek: { start: '', end: '', totalSpending: 0 },
+          lastMonth: { start: '', end: '', totalSpending: 0 },
+          lastQuarter: { start: '', end: '', totalSpending: 0 },
+          lastYear: { start: '', end: '', totalSpending: 0 }
+        }
+      }
+    });
+    return;
+  }
+};
+
+/**
+ * Get comprehensive financial insights
+ * GET /api/plaid/financial-insights
+ */
+export const getFinancialInsights = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const timeFrame = (req.query.timeFrame as string) || 'MTD';
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized: User not found'
+      });
+      return;
+    }
+
+    // Validate timeFrame
+    if (!['WTD', 'MTD', 'QTD', 'YTD'].includes(timeFrame)) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid timeFrame. Must be one of: WTD, MTD, QTD, YTD'
+      });
+      return;
+    }
+
+    // Calculate date range based on selected time period
+    const { startDate, endDate } = calculateDateRange(timeFrame);
+
+    // Fetch all necessary data in parallel
+    const [transactions, accountBalances, historicalSpending] = await Promise.all([
+      // Get transactions for the period
+      supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', userId)
+        .gte('date', startDate.toISOString().split('T')[0])
+        .lte('date', endDate.toISOString().split('T')[0])
+        .order('date', { ascending: false }),
+      
+      // Get current account balances
+      supabase
+        .from('bank_accounts')
+        .select('current_balance, available_balance')
+        .eq('user_id', userId),
+
+      // Calculate historical spending
+      calculateHistoricalSpending(userId)
+    ]);
+
+    if (transactions.error) throw new Error('Error fetching transactions: ' + transactions.error.message);
+    if (accountBalances.error) throw new Error('Error fetching account balances: ' + accountBalances.error.message);
+
+    // Process transactions for category analysis
+    const categoryMap = new Map<string, { amount: number; count: number }>();
+    let totalSpending = 0;
+    let totalInflow = 0;
+    let totalOutflow = 0;
+    let biggestExpense = 0;
+    let transactionCount = 0;
+
+    transactions.data.forEach(tx => {
+      const amount = Math.abs(tx.amount);
+      
+      if (tx.amount > 0) { // Expense
+        const category = standardizeCategory(tx.category || 'Other');
+        
+        if (!categoryMap.has(category)) {
+          categoryMap.set(category, { amount: 0, count: 0 });
+        }
+        const categoryData = categoryMap.get(category)!;
+        categoryData.amount += amount;
+        categoryData.count += 1;
+        
+        totalSpending += amount;
+        totalOutflow += amount;
+        biggestExpense = Math.max(biggestExpense, amount);
+        transactionCount += 1;
+      } else { // Income
+        totalInflow += amount;
+      }
+    });
+
+    // Format categories with percentages
+    const categories = Array.from(categoryMap.entries())
+      .map(([name, data]) => ({
+        name,
+        amount: Number(data.amount.toFixed(2)),
+        percentage: totalSpending > 0 
+          ? Number(((data.amount / totalSpending) * 100).toFixed(1))
+          : 0,
+        transactionCount: data.count
+      }))
+      .sort((a, b) => b.amount - a.amount);
+
+    // Calculate top insights
+    const topCategory = categories[0]?.name || 'No spending';
+    const mostFrequentCategory = [...categories].sort((a, b) => b.transactionCount - a.transactionCount)[0]?.name || 'No transactions';
+    const averageTransaction = transactionCount > 0 ? Number((totalSpending / transactionCount).toFixed(2)) : 0;
+
+    // Calculate cash flow metrics
+    const currentBalance = accountBalances.data.reduce((sum: number, account: any) => sum + (account.current_balance || 0), 0);
+    const availableBalance = accountBalances.data.reduce((sum: number, account: any) => sum + (account.available_balance || 0), 0);
+    
+    // Calculate spending segments
+    const segments = calculateSpendingSegments(
+      transactions.data,
+      timeFrame,
+      startDate,
+      endDate
+    );
+
+    // Calculate cash flow segments
+    const cashFlowSegments = calculateCashFlowSegments(
+      transactions.data,
+      timeFrame,
+      startDate,
+      endDate
+    );
+
+    // Prepare the response
+    const response = {
+      success: true,
+      data: {
+        categoryAnalysis: {
+          timeFrame,
+          period: {
+            start: startDate.toISOString(),
+            end: endDate.toISOString()
+          },
+          totalSpending,
+          categories,
+          segments,
+          topCategory,
+          mostFrequentCategory,
+          biggestExpense,
+          averageTransaction,
+          historicalSpending
+        },
+        cashFlowAnalysis: {
+          totalInflow,
+          totalOutflow,
+          netFlow: totalInflow - totalOutflow,
+          currentBalance,
+          availableBalance,
+          segments: cashFlowSegments,
+          healthScore: calculateHealthScore(totalInflow, totalOutflow, currentBalance)
+        }
+      }
+    };
+
+    res.status(200).json(response);
+  } catch (error: any) {
+    logger.error('Financial Insights Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate financial insights',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+/**
+ * Calculate cash flow segments
+ */
+function calculateCashFlowSegments(
+  transactions: any[],
+  timeFrame: string,
+  startDate: Date,
+  endDate: Date
+): Array<SpendingSegment> {
+  const segments: SpendingSegment[] = [];
+  const segmentMap = new Map<string, number>();
+
+  // Initialize segments based on timeFrame
+  let currentDate = new Date(startDate);
+  const numSegments = getNumberOfSegments(timeFrame);
+  
+  // Create segments with proper dates
+  switch (timeFrame) {
+    case 'LAST_WEEK':
+    case 'LAST_MONTH':
+      // Daily segments
+      while (currentDate <= endDate && segments.length < numSegments) {
+        const segmentDate = currentDate.toISOString().split('T')[0];
+        segmentMap.set(segmentDate, 0);
+        segments.push({ date: segmentDate, spending: 0 });
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+      break;
+    
+    case 'LAST_QUARTER':
+      // Weekly segments
+      while (segments.length < numSegments) {
+        const segmentDate = currentDate.toISOString().split('T')[0];
+        segmentMap.set(segmentDate, 0);
+        segments.push({ date: segmentDate, spending: 0 });
+        currentDate.setDate(currentDate.getDate() + 7);
+      }
+      break;
+    
+    case 'LAST_YEAR':
+      // Monthly segments
+      while (segments.length < numSegments) {
+        const segmentDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
+          .toISOString().split('T')[0];
+        segmentMap.set(segmentDate, 0);
+        segments.push({ date: segmentDate, spending: 0 });
+        currentDate.setMonth(currentDate.getMonth() + 1);
+      }
+      break;
+  }
+
+  // Aggregate transactions into segments
+  transactions.forEach(tx => {
+    if (tx.amount <= 0) return; // Skip non-expenses
+
+    const txDate = new Date(tx.date);
+    let segmentDate = txDate.toISOString().split('T')[0]; // Initialize with transaction date
+
+    if (timeFrame === 'LAST_QUARTER') {
+      // Find the closest weekly segment
+      let matchingSegment = segments.find(segment => {
+        const segmentStart = new Date(segment.date);
+        const segmentEnd = new Date(segmentStart);
+        segmentEnd.setDate(segmentEnd.getDate() + 7);
+        return txDate >= segmentStart && txDate < segmentEnd;
+      });
+
+      if (!matchingSegment) return;
+      segmentDate = matchingSegment.date;
+    } else if (timeFrame === 'LAST_YEAR') {
+      // First day of the month
+      segmentDate = new Date(txDate.getFullYear(), txDate.getMonth(), 1)
+        .toISOString().split('T')[0];
+    }
+
+    if (segmentMap.has(segmentDate)) {
+      segmentMap.set(segmentDate, (segmentMap.get(segmentDate) || 0) + Math.abs(tx.amount));
+    }
+  });
+
+  // Update segments with aggregated values and ensure proper formatting
+  return segments.map(segment => ({
+    date: segment.date,
+    spending: Number(segmentMap.get(segment.date)?.toFixed(2) || 0)
+  }));
+}
+
+/**
+ * Calculate a simple financial health score (0-100)
+ */
+function calculateHealthScore(totalInflow: number, totalOutflow: number, currentBalance: number): number {
+  let score = 50; // Start with a baseline score
+
+  // Factor 1: Income vs Expenses ratio (up to 30 points)
+  if (totalOutflow > 0) {
+    const ratio = totalInflow / totalOutflow;
+    score += Math.min(30, Math.max(-30, (ratio - 1) * 30));
+  }
+
+  // Factor 2: Current Balance health (up to 20 points)
+  if (totalOutflow > 0) {
+    const monthsOfExpenses = currentBalance / (totalOutflow / 30); // Rough monthly expense rate
+    score += Math.min(20, Math.max(0, monthsOfExpenses * 5)); // 4 months of expenses = full points
+  }
+
+  // Ensure score stays within 0-100 range
+  return Math.min(100, Math.max(0, Math.round(score)));
+}
+
+/**
+ * Get recurring expenses analysis
+ * GET /api/plaid/recurring-expenses?timeFrame=LAST_WEEK|LAST_MONTH|LAST_QUARTER|LAST_YEAR
+ */
+export const getRecurringExpenses = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const timeFrame = (req.query.timeFrame as string) || 'LAST_MONTH';
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized: User not found.'
+      });
+      return;
+    }
+
+    // Validate timeFrame
+    if (!['LAST_WEEK', 'LAST_MONTH', 'LAST_QUARTER', 'LAST_YEAR'].includes(timeFrame)) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid timeFrame. Must be one of: LAST_WEEK, LAST_MONTH, LAST_QUARTER, LAST_YEAR'
+      });
+      return;
+    }
+
+    // Calculate date range based on selected time period
+    const { startDate, endDate } = calculateDateRange(timeFrame);
+
+    logger.debug('Date range for recurring expenses analysis:', {
+      timeFrame,
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString()
+    });
+
+    // Fetch transactions for the specified period
+    const { data: transactions, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('date', startDate.toISOString().split('T')[0])
+      .lte('date', endDate.toISOString().split('T')[0])
+      .order('date', { ascending: false });
+
+    if (error) throw new Error('Error fetching transactions: ' + error.message);
+
+    // Group transactions by merchant and amount
+    const merchantGroups = new Map<string, any[]>();
+    transactions.forEach(tx => {
+      const key = `${tx.merchant_name || tx.description}_${tx.amount}`;
+      if (!merchantGroups.has(key)) {
+        merchantGroups.set(key, []);
+      }
+      merchantGroups.get(key)?.push(tx);
+    });
+
+    // Analyze recurring patterns
+    const recurringExpenses = [];
+    for (const [key, txs] of merchantGroups) {
+      if (txs.length < 2) continue; // Skip one-time transactions
+
+      // Sort transactions by date
+      txs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      // Calculate average days between transactions
+      const intervals = [];
+      for (let i = 1; i < txs.length; i++) {
+        const days = Math.round((new Date(txs[i].date).getTime() - new Date(txs[i-1].date).getTime()) / (1000 * 60 * 60 * 24));
+        intervals.push(days);
+      }
+
+      const avgInterval = intervals.reduce((sum, days) => sum + days, 0) / intervals.length;
+      const stdDev = Math.sqrt(intervals.reduce((sum, days) => sum + Math.pow(days - avgInterval, 2), 0) / intervals.length);
+
+      // Determine if it's a recurring expense based on the time frame
+      const isRecurring = timeFrame === 'LAST_WEEK' ? stdDev <= 1 :
+                         timeFrame === 'LAST_MONTH' ? stdDev <= 3 :
+                         timeFrame === 'LAST_QUARTER' ? stdDev <= 5 :
+                         stdDev <= 10;
+
+      if (isRecurring) {
+        // Determine frequency based on time frame
+        let frequency: FrequencyType;
+        if (timeFrame === 'LAST_WEEK') {
+          frequency = avgInterval <= 2 ? 'WEEKLY' : 'BI_WEEKLY';
+        } else if (timeFrame === 'LAST_MONTH') {
+          frequency = avgInterval <= 7 ? 'WEEKLY' : 
+                     avgInterval <= 14 ? 'BI_WEEKLY' : 'MONTHLY';
+        } else if (timeFrame === 'LAST_QUARTER') {
+          frequency = avgInterval <= 7 ? 'WEEKLY' :
+                     avgInterval <= 14 ? 'BI_WEEKLY' :
+                     avgInterval <= 31 ? 'MONTHLY' : 'QUARTERLY';
+        } else {
+          frequency = avgInterval <= 7 ? 'WEEKLY' :
+                     avgInterval <= 14 ? 'BI_WEEKLY' :
+                     avgInterval <= 31 ? 'MONTHLY' :
+                     avgInterval <= 92 ? 'QUARTERLY' : 'ANNUAL';
+        }
+
+        // Calculate next expected date
+        const lastDate = new Date(txs[txs.length - 1].date);
+        const nextDate = new Date(lastDate);
+        nextDate.setDate(nextDate.getDate() + Math.round(avgInterval));
+
+        // Check for amount changes
+        const amounts = txs.map(tx => tx.amount);
+        const avgAmount = amounts.reduce((sum, amount) => sum + amount, 0) / amounts.length;
+        const recentAmount = amounts[amounts.length - 1];
+        const amountChange = Math.abs((recentAmount - avgAmount) / avgAmount) * 100;
+        const hasUnusualChange = amountChange > 10;
+
+        recurringExpenses.push({
+          merchant: txs[0].merchant_name || txs[0].description,
+          frequency,
+          averageAmount: Number(avgAmount.toFixed(2)),
+          recentAmount: Number(recentAmount.toFixed(2)),
+          hasUnusualChange,
+          amountChangePercent: Number(amountChange.toFixed(1)),
+          lastDate: txs[txs.length - 1].date,
+          nextExpectedDate: nextDate.toISOString().split('T')[0],
+          transactionCount: txs.length,
+          category: txs[0].category,
+          confidence: Number((100 - (stdDev * 5)).toFixed(1)),
+          transactions: txs.map(tx => ({
+            date: tx.date,
+            amount: tx.amount,
+            description: tx.description
+          }))
+        });
+      }
+    }
+
+    // Sort by frequency and amount
+    const freqOrder: Record<FrequencyType, number> = {
+      WEEKLY: 0,
+      BI_WEEKLY: 1,
+      MONTHLY: 2,
+      QUARTERLY: 3,
+      ANNUAL: 4
+    };
+
+    recurringExpenses.sort((a, b) => {
+      const freqA = freqOrder[a.frequency];
+      const freqB = freqOrder[b.frequency];
+      if (freqA !== freqB) {
+        return freqA - freqB;
+      }
+      return b.averageAmount - a.averageAmount;
+    });
+
+    // Group by frequency
+    const groupedByFrequency = {
+      weekly: recurringExpenses.filter(exp => exp.frequency === 'WEEKLY'),
+      biWeekly: recurringExpenses.filter(exp => exp.frequency === 'BI_WEEKLY'),
+      monthly: recurringExpenses.filter(exp => exp.frequency === 'MONTHLY'),
+      quarterly: recurringExpenses.filter(exp => exp.frequency === 'QUARTERLY'),
+      annual: recurringExpenses.filter(exp => exp.frequency === 'ANNUAL')
+    };
+
+    // Calculate totals
+    const calculateTotal = (expenses: any[]) => 
+      expenses.reduce((sum, exp) => sum + exp.averageAmount, 0);
+
+    const totals = {
+      weekly: Number(calculateTotal(groupedByFrequency.weekly).toFixed(2)),
+      biWeekly: Number(calculateTotal(groupedByFrequency.biWeekly).toFixed(2)),
+      monthly: Number(calculateTotal(groupedByFrequency.monthly).toFixed(2)),
+      quarterly: Number(calculateTotal(groupedByFrequency.quarterly).toFixed(2)),
+      annual: Number(calculateTotal(groupedByFrequency.annual).toFixed(2))
+    };
+
+    // Calculate total monthly commitment based on frequency
+    const totalMonthlyCommitment = Number((
+      totals.monthly +
+      (totals.weekly * 4) +
+      (totals.biWeekly * 2) +
+      (totals.quarterly / 3) +
+      (totals.annual / 12)
+    ).toFixed(2));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        timeFrame,
+        period: {
+          start: startDate.toISOString(),
+          end: endDate.toISOString()
+        },
+        summary: {
+          totalRecurringExpenses: recurringExpenses.length,
+          totalMonthlyCommitment,
+          unusualChanges: recurringExpenses.filter(exp => exp.hasUnusualChange).length
+        },
+        frequencyGroups: groupedByFrequency,
+        totals,
+        upcomingExpenses: recurringExpenses
+          .filter(exp => new Date(exp.nextExpectedDate) <= new Date(Date.now() + 30 * 24 * 60 * 60 * 1000))
+          .sort((a, b) => new Date(a.nextExpectedDate).getTime() - new Date(b.nextExpectedDate).getTime())
+      }
+    });
+
+  } catch (error: any) {
+    logger.error('Recurring Expenses Analysis Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to analyze recurring expenses',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 

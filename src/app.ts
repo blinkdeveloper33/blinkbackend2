@@ -1,6 +1,5 @@
-// src/app.ts
-
-import express, { Application, Request, Response, NextFunction, Router } from 'express';
+import express from 'express';
+import type { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -27,14 +26,14 @@ const app: Application = express();
 
 // Debug logging middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
-  logger.debug(`Request received: ${req.method} ${req.originalUrl}`);
+  logger.debug(`Request received: ${req.method} ${req.url}`);
   next();
 });
 
 // Middleware
 app.use(helmet());
 app.use(cors({
-  origin: '*',
+  origin: ['http://localhost:3000', 'https://1f33-12-162-124-34.ngrok-free.app', 'exp://*'],
   credentials: false
 }));
 app.use(express.json());
@@ -51,24 +50,19 @@ const limiter = rateLimit({
     success: false,
     error: 'Too many requests from this IP, please try again later.'
   },
-  skip: (req: Request) => req.path === '/api/plaid/webhook', // Exclude webhook from rate limiting
+  handler: (req: Request, res: Response) => {
+    res.status(429).json({
+      success: false,
+      error: 'Too many requests from this IP, please try again later.'
+    });
+  },
+  skip: (req: Request) => req.url === '/api/plaid/webhook', // Exclude webhook from rate limiting
 });
 app.use(limiter);
 
 // Public Routes
 app.use('/api/users', publicUserRoutes);
 app.post('/api/plaid/webhook', plaidRoutes);
-
-// Apply authMiddleware to all routes below this line
-app.use(authMiddleware);
-
-// Protected Routes
-app.use('/api/users', protectedUserRoutes);
-app.use('/api/plaid', plaidRoutes);
-app.use('/api/cash-flow', cashFlowRoutes);
-app.use('/api/blink-advances', blinkAdvanceRoutes);
-app.use('/api/blink-advances', blinkAdvanceDisbursementRoutes);
-
 
 // Root Endpoint (public)
 app.get('/', (req: Request, res: Response) => {
@@ -83,14 +77,21 @@ app.get('/api/health', (req: Request, res: Response) => {
   res.status(200).json({ success: true, message: 'Server is healthy' });
 });
 
+// Protected Routes
+app.use('/api/users', authMiddleware, protectedUserRoutes);
+app.use('/api/plaid', authMiddleware, plaidRoutes);
+app.use('/api/cash-flow', authMiddleware, cashFlowRoutes);
+app.use('/api/blink-advances', authMiddleware, blinkAdvanceRoutes);
+app.use('/api/blink-advances', authMiddleware, blinkAdvanceDisbursementRoutes);
+
 // 404 handler
-app.use((req, res) => {
+app.use((req: Request, res: Response) => {
   res.status(404).json({ success: false, error: 'Endpoint not found' });
 });
 
 // Global Error Handling Middleware
 app.use(
-  (err: any, req: Request, res: Response, next: NextFunction) => {
+  (err: Error, req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) {
       return next(err);
     }
@@ -111,5 +112,4 @@ app.listen(config.PORT, () => {
   scheduleBalanceSync();
 });
 
-export default app;
-
+export default app; 

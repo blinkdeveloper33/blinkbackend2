@@ -6,7 +6,6 @@ import {
   registerInitial,
   verifyOTP,
   resendOtp,
-  registerComplete,
   loginUser,
   fetchUserProfile,
   getUserStatus,
@@ -15,6 +14,7 @@ import {
   getUserAccountData,
   updateProfilePicture,
   getProfilePictureUrl,
+  registerCompleteWithLogin,
 } from '../controllers/userController';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import logger from '../services/logger';
@@ -76,40 +76,6 @@ const resendOtpValidation: ValidationChain[] = [
     .withMessage('A valid email address is required'),
 ];
 
-const completeRegistrationValidation: ValidationChain[] = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('A valid email address is required'),
-  body('password')
-    .isLength({ min: 8 })
-    .withMessage('Password must be at least 8 characters long')
-    .matches(/[A-Z]/)
-    .withMessage('Password must contain at least one uppercase letter')
-    .matches(/[a-z]/)
-    .withMessage('Password must contain at least one lowercase letter')
-    .matches(/\d/)
-    .withMessage('Password must contain at least one number')
-    .matches(/[!@#$%^&*(),.?":{}|<>]/)
-    .withMessage('Password must contain at least one special character'),
-  body('first_name')
-    .trim()
-    .notEmpty()
-    .withMessage('First name is required'),
-  body('last_name')
-    .trim()
-    .notEmpty()
-    .withMessage('Last name is required'),
-  body('state')
-    .trim()
-    .notEmpty()
-    .withMessage('State is required'),
-  body('zipcode')
-    .trim()
-    .isPostalCode('US')
-    .withMessage('A valid US ZIP code is required'),
-];
-
 const loginValidation: ValidationChain[] = [
   body('email')
     .isEmail()
@@ -154,13 +120,45 @@ publicRouter.post(
 );
 
 publicRouter.post(
-  '/register-complete',
+  '/register-complete-with-login',
   (req: Request, res: Response, next: NextFunction) => {
-    logger.debug('Attempting to access /register-complete route');
+    logger.debug('Attempting to access /register-complete-with-login route');
     next();
   },
-  validate(completeRegistrationValidation),
-  registerComplete
+  validate([
+    body('email')
+      .isEmail()
+      .normalizeEmail()
+      .withMessage('A valid email address is required'),
+    body('password')
+      .isLength({ min: 8 })
+      .withMessage('Password must be at least 8 characters long')
+      .matches(/[A-Z]/)
+      .withMessage('Password must contain at least one uppercase letter')
+      .matches(/[a-z]/)
+      .withMessage('Password must contain at least one lowercase letter')
+      .matches(/\d/)
+      .withMessage('Password must contain at least one number')
+      .matches(/[!@#$%^&*(),.?":{}|<>]/)
+      .withMessage('Password must contain at least one special character'),
+    body('first_name')
+      .trim()
+      .notEmpty()
+      .withMessage('First name is required'),
+    body('last_name')
+      .trim()
+      .notEmpty()
+      .withMessage('Last name is required'),
+    body('state')
+      .trim()
+      .notEmpty()
+      .withMessage('State is required'),
+    body('zipcode')
+      .trim()
+      .isPostalCode('US')
+      .withMessage('A valid US ZIP code is required')
+  ]),
+  registerCompleteWithLogin
 );
 
 publicRouter.post(

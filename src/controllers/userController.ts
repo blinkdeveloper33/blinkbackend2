@@ -24,71 +24,66 @@ const generateJWT = (userId: string): string => {
  * Registers the user's email and sends an OTP.
  * This initializes a registration session.
  */
-const registerInitial = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-  const { email } = req.body;
-
+const registerInitial = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Check if user already exists
-    const { data: existingUser, error: userError } = await supabase
-      .from('users')
-      .select('id, email_verified')
-      .eq('email', email)
-      .single();
+    const { email } = req.body;
+    
+    // Log the start of registration
+    logger.info('Starting registration process for:', { email });
 
-    if (userError && userError.code !== 'PGRST116') { // PGRST116: Row not found
-      throw new Error('Error checking existing user: ' + userError.message);
-    }
+    // Generate OTP
+    const otp = generateOTP();
+    logger.info('Generated OTP for:', { email });
 
-    if (existingUser) {
-      if (existingUser.email_verified) {
-        res.status(400).json({ 
-          success: false,
-          error: 'User already exists and is verified.' 
-        });
-        return;
-      } else {
-        // Resend OTP if user exists but not verified
-        await resendOtpInternal(email);
-        res.status(200).json({ 
-          success: true,
-          message: 'OTP has been resent to your email.' 
-        });
-        return;
+    try {
+      // Save registration session
+      const { error: dbError } = await supabase
+        .from('registration_sessions')
+        .insert([
+          {
+            email,
+            otp_code: otp,
+            expires_at: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+            is_verified: false,
+          },
+        ]);
+
+      if (dbError) {
+        logger.error('Database Error:', dbError);
+        throw new Error(`Database error: ${dbError.message}`);
       }
+
+      logger.info('Successfully saved to database, attempting to send email...');
+
+      // Send OTP email
+      await sendOTPEmail(email, otp);
+      logger.info('Email sent successfully');
+
+      res.status(200).json({
+        success: true,
+        message: 'Registration initiated. Please check your email for OTP.',
+      });
+
+    } catch (error: any) {
+      // Clean up registration session if email fails
+      await supabase
+        .from('registration_sessions')
+        .delete()
+        .eq('email', email);
+      
+      throw error;
     }
 
-    // Generate OTP and expiration time
-    const otpCode = generateOTP();
-    const otpExpiration = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
-
-    // Create or update registration session
-    const { error: upsertError } = await supabase
-      .from('registration_sessions')
-      .upsert({
-        email,
-        otp_code: otpCode,
-        expires_at: otpExpiration.toISOString(),
-        is_verified: false,
-        created_at: new Date().toISOString(),
-      }, { onConflict: 'email' });
-
-    if (upsertError) {
-      throw new Error('Failed to create or update registration session: ' + upsertError.message);
-    }
-
-    // Send OTP via email
-    await sendOTPEmail(email, otpCode);
-
-    res.status(200).json({
-      success: true,
-      message: 'OTP has been sent to your email address.',
-    });
   } catch (error: any) {
-    logger.error('Initial Registration Error:', error.message);
-    res.status(500).json({ 
+    logger.error('Registration Error:', {
+      error: error.message,
+      name: error.name
+    });
+    
+    res.status(500).json({
       success: false,
-      error: 'Internal server error', 
-      details: error.message 
+      error: 'Internal server error',
+      details: error.message
     });
   }
 };
@@ -222,105 +217,6 @@ const resendOtpInternal = async (email: string): Promise<void> => {
 
   // Resend OTP via email
   await sendOTPEmail(email, otpCode);
-};
-
-/**
- * Completes user registration by storing profile details and password.
- */
-const registerComplete = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-  const { email, password, first_name, last_name, state, zipcode } = req.body;
-
-  try {
-    // Fetch the registration session
-    const { data: session, error: sessionError } = await supabase
-      .from('registration_sessions')
-      .select('*')
-      .eq('email', email)
-      .maybeSingle();
-
-    if (sessionError) {
-      throw new Error('Error fetching registration session: ' + sessionError.message);
-    }
-
-    if (!session) {
-      res.status(400).json({ 
-        success: false,
-        error: 'No registration session found. Please initiate registration first.' 
-      });
-      return;
-    }
-
-    if (!session.is_verified) {
-      res.status(400).json({ 
-        success: false,
-        error: 'Email has not been verified. Please verify your email first.' 
-      });
-      return;
-    }
-
-    // Check if user already exists
-    const { data: existingUser, error: userError } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
-
-    if (userError && userError.code !== 'PGRST116') { // PGRST116: No rows found
-      throw new Error('Error checking existing user: ' + userError.message);
-    }
-
-    if (existingUser) {
-      res.status(400).json({ 
-        success: false,
-        error: 'User already exists.' 
-      });
-      return;
-    }
-
-    // Hash the password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create the user record
-    const { error: insertError } = await supabase
-      .from('users')
-      .insert([
-        {
-          email,
-          password: hashedPassword,
-          first_name,
-          last_name,
-          state,
-          zipcode,
-          email_verified: true,
-        }
-      ]);
-
-    if (insertError) {
-      throw new Error('Failed to create user: ' + insertError.message);
-    }
-
-    // Delete the registration session
-    const { error: deleteError } = await supabase
-      .from('registration_sessions')
-      .delete()
-      .eq('email', email);
-
-    if (deleteError) {
-      throw new Error('Failed to delete registration session: ' + deleteError.message);
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Registration completed successfully.',
-    });
-  } catch (error: any) {
-    logger.error('Complete Registration Error:', error.message);
-    res.status(500).json({ 
-      success: false,
-      error: 'Internal server error', 
-      details: error.message 
-    });
-  }
 };
 
 /**
@@ -680,7 +576,7 @@ const getUserAccountData = async (req: AuthenticatedRequest, res: Response): Pro
         userProfile: {
           name: `${userProfile.first_name} ${userProfile.last_name}`,
           email: userProfile.email,
-          memberSince: userProfile.created_at,
+          memberSince: userProfile.created_at
         },
         totalBalance,
         accountStats: {
@@ -775,13 +671,37 @@ const updateProfilePicture = async (req: AuthenticatedRequest, res: Response): P
     const extension = fileType.split('/')[1];
     const filename = `${userId}-${Date.now()}.${extension}`;
 
+    // Delete old profile picture if exists
+    const { data: userData } = await supabase
+      .from('users')
+      .select('profile_picture_url')
+      .eq('id', userId)
+      .single();
+
+    if (userData?.profile_picture_url) {
+      try {
+        // Extract filename from the full URL
+        const oldFilename = userData.profile_picture_url.split('/').pop();
+        if (oldFilename) {
+          await supabase
+            .storage
+            .from('profile-pictures')
+            .remove([oldFilename]);
+        }
+      } catch (deleteError) {
+        logger.error('Error deleting old profile picture:', deleteError);
+        // Continue with upload even if delete fails
+      }
+    }
+
     // Upload to Supabase Storage
     const { data: uploadData, error: uploadError } = await supabase
       .storage
       .from('profile-pictures')
       .upload(filename, buffer, {
         contentType: fileType,
-        upsert: true
+        upsert: true,
+        cacheControl: '3600'
       });
 
     if (uploadError) {
@@ -794,28 +714,11 @@ const updateProfilePicture = async (req: AuthenticatedRequest, res: Response): P
       .from('profile-pictures')
       .getPublicUrl(filename);
 
-    // Delete old profile picture if exists
-    const { data: userData } = await supabase
-      .from('users')
-      .select('profile_picture_url')
-      .eq('id', userId)
-      .single();
-
-    if (userData?.profile_picture_url) {
-      const oldFilename = userData.profile_picture_url.split('/').pop();
-      if (oldFilename) {
-        await supabase
-          .storage
-          .from('profile-pictures')
-          .remove([oldFilename]);
-      }
-    }
-
-    // Update user record with new profile picture URL
+    // Update user record with the complete public URL
     const { error: updateError } = await supabase
       .from('users')
       .update({
-        profile_picture_url: filename,
+        profile_picture_url: publicUrl,
         profile_picture_updated_at: new Date().toISOString()
       })
       .eq('id', userId);
@@ -856,7 +759,7 @@ const getProfilePictureUrl = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
-    // Get the user's profile picture filename from the users table
+    // Get the user's profile picture URL from the users table
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('profile_picture_url')
@@ -877,16 +780,11 @@ const getProfilePictureUrl = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
-    // Get the public URL for the profile picture
-    const { data: { publicUrl } } = supabase
-      .storage
-      .from('profile-pictures')
-      .getPublicUrl(user.profile_picture_url);
-
+    // Return the stored public URL directly
     res.status(200).json({
       success: true,
       data: {
-        url: publicUrl
+        url: user.profile_picture_url
       }
     });
   } catch (error: any) {
@@ -899,11 +797,125 @@ const getProfilePictureUrl = async (req: AuthenticatedRequest, res: Response): P
   }
 };
 
+/**
+ * Completes user registration and logs them in in a single transaction
+ */
+const registerCompleteWithLogin = async (req: Request, res: Response): Promise<void> => {
+  const { email, password, first_name, last_name, state, zipcode } = req.body;
+
+  try {
+    // Fetch the registration session
+    const { data: session, error: sessionError } = await supabase
+      .from('registration_sessions')
+      .select('*')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (sessionError) {
+      throw new Error('Error fetching registration session: ' + sessionError.message);
+    }
+
+    if (!session) {
+      res.status(400).json({ 
+        success: false,
+        error: 'No registration session found. Please initiate registration first.' 
+      });
+      return;
+    }
+
+    if (!session.is_verified) {
+      res.status(400).json({ 
+        success: false,
+        error: 'Email has not been verified. Please verify your email first.' 
+      });
+      return;
+    }
+
+    // Check if user already exists
+    const { data: existingUser, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    if (userError && userError.code !== 'PGRST116') { // PGRST116: No rows found
+      throw new Error('Error checking existing user: ' + userError.message);
+    }
+
+    if (existingUser) {
+      res.status(400).json({ 
+        success: false,
+        error: 'User already exists.' 
+      });
+      return;
+    }
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create the user record
+    const { data: userData, error: insertError } = await supabase
+      .from('users')
+      .insert([
+        {
+          email,
+          password: hashedPassword,
+          first_name,
+          last_name,
+          state,
+          zipcode,
+          email_verified: true,
+          created_at: new Date().toISOString()
+        }
+      ])
+      .select()
+      .single();
+
+    if (insertError) {
+      throw new Error('Failed to create user: ' + insertError.message);
+    }
+
+    // Delete the registration session
+    const { error: deleteError } = await supabase
+      .from('registration_sessions')
+      .delete()
+      .eq('email', email);
+
+    if (deleteError) {
+      throw new Error('Failed to delete registration session: ' + deleteError.message);
+    }
+
+    // Generate JWT token for immediate login
+    const token = generateJWT(userData.id);
+
+    logger.info('Registration completed and logged in successfully:', { email, userId: userData.id });
+
+    res.status(200).json({
+      success: true,
+      message: 'Registration completed and logged in successfully',
+      token,
+      userId: userData.id,
+      user: {
+        email: userData.email,
+        firstName: userData.first_name,
+        lastName: userData.last_name
+      }
+    });
+
+  } catch (error: any) {
+    logger.error('Registration with Login Error:', error.message);
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error', 
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined 
+    });
+  }
+};
+
 export {
   registerInitial,
   verifyOTP,
   resendOtp,
-  registerComplete,
   loginUser,
   fetchUserProfile,
   getUserStatus,
@@ -912,5 +924,6 @@ export {
   getUserAccountData,
   updateProfilePicture,
   getProfilePictureUrl,
+  registerCompleteWithLogin
 };
 

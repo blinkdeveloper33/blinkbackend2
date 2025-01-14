@@ -409,3 +409,210 @@ export const checkActiveBlinkAdvance = async (req: AuthenticatedRequest, res: Re
   }
 };
 
+/**
+ * Get all Blink Advance information for a user
+ * GET /api/blink-advance/user/:userId
+ */
+export const getUserBlinkAdvances = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const requestedUserId = req.params.userId;
+    const authenticatedUserId = req.user?.id;
+
+    // Security check: ensure the authenticated user is requesting their own data
+    if (requestedUserId !== authenticatedUserId) {
+      res.status(403).json({
+        success: false,
+        error: 'Forbidden: You can only access your own Blink Advance information.'
+      });
+      return;
+    }
+
+    // Fetch all blink advances for the user with related bank account information
+    const { data: advances, error } = await supabase
+      .from('blink_advances')
+      .select(`
+        *,
+        bank_accounts (
+          id,
+          account_name,
+          account_type,
+          account_subtype,
+          account_mask
+        ),
+        blink_advance_approvals (
+          id,
+          is_approved,
+          approved_at,
+          created_at,
+          updated_at
+        )
+      `)
+      .eq('user_id', requestedUserId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw new Error('Error fetching Blink Advances: ' + error.message);
+    }
+
+    // Transform the data to include calculated fields and format dates
+    const formattedAdvances = advances.map(advance => ({
+      id: advance.id,
+      requestedAmount: Number(advance.requested_amount),
+      transferSpeed: advance.transfer_speed,
+      fee: Number(advance.fee),
+      totalAmount: Number(advance.requested_amount) + Number(advance.fee),
+      repayDate: advance.repay_date,
+      status: advance.status,
+      dates: {
+        created: advance.created_at,
+        updated: advance.updated_at,
+        approved: advance.approved_at,
+        disbursed: advance.disbursed_at,
+        repaid: advance.repaid_at
+      },
+      bankAccount: {
+        id: advance.bank_account_id,
+        name: advance.bank_accounts?.account_name,
+        type: advance.bank_accounts?.account_type,
+        subtype: advance.bank_accounts?.account_subtype,
+        mask: advance.bank_accounts?.account_mask
+      },
+      approval: advance.blink_advance_approvals ? {
+        id: advance.approval_id,
+        isApproved: advance.blink_advance_approvals.is_approved,
+        approvedAt: advance.blink_advance_approvals.approved_at
+      } : null
+    }));
+
+    const now = new Date();
+
+    // Calculate summary statistics
+    const summary = {
+      overview: {
+        totalAdvances: formattedAdvances.length,
+        activeAdvances: formattedAdvances.filter(a => 
+          a.dates.disbursed && !a.dates.repaid && a.status === 'funded'
+        ).length,
+        pendingAdvances: formattedAdvances.filter(a => 
+          a.status === 'pending' && new Date(a.repayDate) > now
+        ).length,
+        expiredAdvances: formattedAdvances.filter(a => 
+          a.status === 'pending' && new Date(a.repayDate) <= now
+        ).length,
+        approvedAdvances: formattedAdvances.filter(a => 
+          a.status === 'approved'
+        ).length,
+        completedAdvances: formattedAdvances.filter(a => 
+          a.dates.repaid || a.status === 'canceled'
+        ).length
+      },
+      financial: {
+        totalAmountBorrowed: formattedAdvances
+          .filter(a => a.dates.disbursed)
+          .reduce((sum, a) => sum + a.requestedAmount, 0),
+        totalFeesPaid: formattedAdvances
+          .filter(a => a.dates.disbursed)
+          .reduce((sum, a) => sum + a.fee, 0),
+        averageAdvanceAmount: formattedAdvances.length > 0 
+          ? Math.round((formattedAdvances.reduce((sum, a) => sum + a.requestedAmount, 0) / formattedAdvances.length) * 100) / 100
+          : 0,
+        pendingAmount: formattedAdvances
+          .filter(a => a.status === 'pending' && new Date(a.repayDate) > now)
+          .reduce((sum, a) => sum + a.totalAmount, 0)
+      },
+      dates: {
+        firstAdvance: formattedAdvances.length > 0 
+          ? formattedAdvances[formattedAdvances.length - 1].dates.created 
+          : null,
+        lastAdvance: formattedAdvances.length > 0 
+          ? formattedAdvances[0].dates.created 
+          : null,
+        nextRepayment: formattedAdvances
+          .filter(a => a.dates.disbursed && !a.dates.repaid)
+          .sort((a, b) => new Date(a.repayDate).getTime() - new Date(b.repayDate).getTime())[0]?.repayDate || null
+      }
+    };
+
+    // Group advances by status with minimal information
+    const advancesByStatus = {
+      active: formattedAdvances
+        .filter(a => a.dates.disbursed && !a.dates.repaid && a.status === 'funded')
+        .map(a => ({
+          id: a.id,
+          amount: a.requestedAmount,
+          fee: a.fee,
+          totalAmount: a.totalAmount,
+          repayDate: a.repayDate,
+          disbursedAt: a.dates.disbursed,
+          bankAccount: a.bankAccount
+        })),
+      pending: formattedAdvances
+        .filter(a => a.status === 'pending' && new Date(a.repayDate) > now)
+        .sort((a, b) => new Date(a.repayDate).getTime() - new Date(b.repayDate).getTime())
+        .map(a => ({
+          id: a.id,
+          amount: a.requestedAmount,
+          fee: a.fee,
+          totalAmount: a.totalAmount,
+          repayDate: a.repayDate,
+          createdAt: a.dates.created,
+          bankAccount: a.bankAccount,
+          daysUntilExpiry: Math.ceil((new Date(a.repayDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+        })),
+      expired: formattedAdvances
+        .filter(a => a.status === 'pending' && new Date(a.repayDate) <= now)
+        .sort((a, b) => new Date(b.repayDate).getTime() - new Date(a.repayDate).getTime())
+        .map(a => ({
+          id: a.id,
+          amount: a.requestedAmount,
+          fee: a.fee,
+          totalAmount: a.totalAmount,
+          repayDate: a.repayDate,
+          createdAt: a.dates.created,
+          bankAccount: a.bankAccount,
+          daysExpired: Math.ceil((now.getTime() - new Date(a.repayDate).getTime()) / (1000 * 60 * 60 * 24))
+        })),
+      approved: formattedAdvances
+        .filter(a => a.status === 'approved')
+        .map(a => ({
+          id: a.id,
+          amount: a.requestedAmount,
+          fee: a.fee,
+          totalAmount: a.totalAmount,
+          repayDate: a.repayDate,
+          approvedAt: a.dates.approved,
+          bankAccount: a.bankAccount
+        })),
+      completed: formattedAdvances
+        .filter(a => a.dates.repaid || a.status === 'canceled')
+        .sort((a, b) => new Date(b.dates.repaid || b.dates.updated || '').getTime() - new Date(a.dates.repaid || a.dates.updated || '').getTime())
+        .map(a => ({
+          id: a.id,
+          amount: a.requestedAmount,
+          fee: a.fee,
+          totalAmount: a.totalAmount,
+          repayDate: a.repayDate,
+          completedAt: a.dates.repaid || a.dates.updated,
+          bankAccount: a.bankAccount,
+          status: a.dates.repaid ? 'repaid' : 'canceled'
+        }))
+    };
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summary,
+        advances: advancesByStatus
+      }
+    });
+
+  } catch (error: any) {
+    logger.error('Get User Blink Advances Error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve Blink Advance information',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+

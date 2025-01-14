@@ -8,7 +8,8 @@ import {
   getBlinkAdvanceById,
   updateBlinkAdvanceStatus,
   getBlinkAdvanceApprovalStatus,
-  checkActiveBlinkAdvance
+  checkActiveBlinkAdvance,
+  getUserBlinkAdvances
 } from '../controllers/blinkAdvanceController';
 import authMiddleware from '../middleware/authMiddleware';
 
@@ -128,6 +129,12 @@ router.patch(
   ]),
   updateBlinkAdvanceStatus
 );
+
+/**
+ * Get all Blink Advance information for a user
+ * GET /api/blink-advances/user/:userId
+ */
+router.get('/user/:userId', authMiddleware, getUserBlinkAdvances);
 
 export default router;
 

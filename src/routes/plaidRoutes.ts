@@ -15,6 +15,11 @@ import {
   getDailyTransactionSummary,
   getSpendingSummary,
   getTransactionCategoryAnalysis,
+  getTransactionDetails,
+  getSpendingAnalysis,
+  getHistoricalSpending,
+  getFinancialInsights,
+  getRecurringExpenses
 } from '../controllers/plaidController';
 import authMiddleware from '../middleware/authMiddleware';
 import rateLimit from 'express-rate-limit';
@@ -213,6 +218,55 @@ router.get(
   '/category-analysis',
   authMiddleware,
   getTransactionCategoryAnalysis
+);
+
+/**
+ * Get transaction details endpoint
+ */
+router.get(
+  '/transactions/:transactionId',
+  authMiddleware,
+  getTransactionDetails
+);
+
+/**
+ * Get comprehensive spending analysis
+ * GET /api/plaid/spending-analysis
+ */
+router.get(
+  '/spending-analysis',
+  authMiddleware,
+  getSpendingAnalysis
+);
+
+/**
+ * Get historical spending totals
+ * GET /api/plaid/historical-spending
+ */
+router.get(
+  '/historical-spending',
+  authMiddleware,
+  getHistoricalSpending
+);
+
+/**
+ * Get comprehensive financial insights
+ * GET /api/plaid/financial-insights
+ */
+router.get(
+  '/financial-insights',
+  authMiddleware,
+  getFinancialInsights
+);
+
+/**
+ * Get recurring expenses analysis
+ * GET /api/plaid/recurring-expenses
+ */
+router.get(
+  '/recurring-expenses',
+  authMiddleware,
+  getRecurringExpenses
 );
 
 export default router;

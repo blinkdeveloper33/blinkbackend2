@@ -26,6 +26,7 @@ const authMiddleware = async (req: AuthenticatedRequest, res: Response, next: Ne
   const authHeader = req.headers['authorization'];
 
   logger.info(`Auth Middleware invoked for ${req.method} ${req.originalUrl}`);
+  logger.debug('Auth Header:', authHeader);
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     logger.warn(`Unauthorized access attempt to ${req.originalUrl}: No token provided.`);
@@ -36,7 +37,8 @@ const authMiddleware = async (req: AuthenticatedRequest, res: Response, next: Ne
     return;
   }
 
-  const token = authHeader.split(' ')[1]; // Expecting format: "Bearer <token>"
+  const token = authHeader.split(' ')[1];
+  logger.debug('Token:', token);
 
   if (!token) {
     logger.warn(`Unauthorized access attempt to ${req.originalUrl}: Token missing.`);
@@ -48,17 +50,16 @@ const authMiddleware = async (req: AuthenticatedRequest, res: Response, next: Ne
   }
 
   try {
-    // Verify JWT token
     const decoded = jwt.verify(token, config.JWT_SECRET) as { id: string };
+    logger.debug('Decoded token:', decoded);
 
-    logger.info(`Decoded JWT for user ID: ${decoded.id}`);
-
-    // Fetch user from Supabase using the decoded ID
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, email, first_name, last_name') // Select necessary fields
+      .select('id, email, first_name, last_name')
       .eq('id', decoded.id)
       .single();
+
+    logger.debug('Supabase user result:', { user, error });
 
     if (error || !user) {
       logger.warn(`Unauthorized access attempt: User not found for ID ${decoded.id}`);
@@ -69,12 +70,11 @@ const authMiddleware = async (req: AuthenticatedRequest, res: Response, next: Ne
       return;
     }
 
-    // Attach user information to the request object
     req.user = user;
     logger.info(`User authenticated: ${user.email}`);
     next();
   } catch (err: any) {
-    logger.warn(`Forbidden access attempt to ${req.originalUrl}: Invalid token.`);
+    logger.warn(`Forbidden access attempt to ${req.originalUrl}: Invalid token.`, err);
     res.status(403).json({ 
       success: false,
       error: 'Forbidden: Invalid token.' 

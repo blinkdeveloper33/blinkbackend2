@@ -23,6 +23,8 @@ interface Config {
   SMTP_FROM_EMAIL: string;
   SMTP_FROM_NAME: string;
   CLIENT_NAME: string; // Added for Plaid's client_name
+  RESEND_API_KEY: string;
+  RESEND_FROM_EMAIL: string;
 }
 
 const config: Config = {
@@ -43,7 +45,9 @@ const config: Config = {
   SMTP_PASS: process.env.SMTP_PASS as string,
   SMTP_FROM_EMAIL: process.env.SMTP_FROM_EMAIL as string,
   SMTP_FROM_NAME: process.env.SMTP_FROM_NAME as string,
-  CLIENT_NAME: process.env.CLIENT_NAME as string, // Added for Plaid's client_name
+  CLIENT_NAME: process.env.CLIENT_NAME as string || 'Blink', // Add default fallback
+  RESEND_API_KEY: process.env.RESEND_API_KEY as string,
+  RESEND_FROM_EMAIL: process.env.RESEND_FROM_EMAIL as string || 'team@blinkfinances.com',
 };
 
 // Debugging: Log loaded environment variables (Avoid logging sensitive data in production)

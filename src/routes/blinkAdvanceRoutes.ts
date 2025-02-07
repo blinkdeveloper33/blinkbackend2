@@ -7,9 +7,8 @@ import {
   getBlinkAdvances,
   getBlinkAdvanceById,
   updateBlinkAdvanceStatus,
-  getBlinkAdvanceApprovalStatus,
-  checkActiveBlinkAdvance,
-  getUserBlinkAdvances
+  checkActiveAdvance,
+  getBlinkAdvanceApprovalStatus
 } from '../controllers/blinkAdvanceController';
 import authMiddleware from '../middleware/authMiddleware';
 
@@ -25,8 +24,8 @@ const validate = (validations: ValidationChain[]) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       res.status(400).json({ 
-          success: false,
-          errors: errors.array() 
+        success: false,
+        errors: errors.array() 
       });
       return;
     }
@@ -37,6 +36,7 @@ const validate = (validations: ValidationChain[]) => {
 /**
  * Get Blink Advance Approval Status
  * GET /api/blink-advances/approval-status
+ * Returns whether the user is approved for Blink Advances
  */
 router.get(
   '/approval-status',
@@ -45,44 +45,48 @@ router.get(
 );
 
 /**
- * Check Active Blink Advance
+ * Check Active Advance
  * GET /api/blink-advances/active
  */
 router.get(
   '/active',
   authMiddleware,
-  checkActiveBlinkAdvance
+  checkActiveAdvance
 );
 
 /**
  * Create BlinkAdvance Endpoint
  * POST /api/blink-advances
+ * Note: 
+ * - Amount is fixed at $200
+ * - Base fee depends on transfer speed:
+ *   - Instant: $24.99
+ *   - Standard: $19.99
+ * - 10% discount on fee if repayment is within 7 days
  */
 router.post(
   '/',
   authMiddleware,
   validate([
-    body('requestedAmount')
-      .isFloat({ min: 100, max: 300 })
-      .withMessage('Requested amount must be between $100 and $300.'),
     body('transferSpeed')
-      .isIn(['Instant', 'Normal'])
-      .withMessage("Transfer speed must be either 'Instant' or 'Normal'."),
-    body('repayDate')
+      .isIn(['Instant', 'Standard'])
+      .withMessage("Transfer speed must be either 'Instant' or 'Standard'."),
+    body('repaymentDate')
       .isISO8601()
-      .withMessage('Repay date must be a valid ISO 8601 date.')
-      .custom((repayDate) => {
-        const repay = new Date(repayDate);
+      .withMessage('Repayment date must be a valid ISO 8601 date.')
+      .custom((repaymentDate) => {
+        const repayDate = new Date(repaymentDate);
         const today = new Date();
         const maxRepayDate = new Date(today.getTime() + 31 * 24 * 60 * 60 * 1000);
-        if (repay > maxRepayDate) {
-          throw new Error('Repay date must be within 31 days from today.');
+        if (repayDate > maxRepayDate) {
+          throw new Error('Repayment date must be within 31 days from today.');
         }
         return true;
       }),
     body('bankAccountId')
-      .isUUID()
-      .withMessage('Bank Account ID must be a valid UUID.'),
+      .isString()
+      .notEmpty()
+      .withMessage('Bank Account ID is required.'),
   ]),
   createBlinkAdvance
 );
@@ -124,17 +128,16 @@ router.patch(
       .isUUID()
       .withMessage('BlinkAdvance ID must be a valid UUID.'),
     body('status')
-      .isIn(['approved', 'funded', 'repaid', 'canceled'])
-      .withMessage("Status must be one of: 'approved', 'funded', 'repaid', 'canceled'."),
+      .isIn(['approved', 'disbursed', 'repaid', 'defaulted', 'cancelled'])
+      .withMessage("Status must be one of: 'approved', 'disbursed', 'repaid', 'defaulted', 'cancelled'."),
+    body('reference')
+      .optional()
+      .isString()
+      .notEmpty()
+      .withMessage('Reference must be a non-empty string if provided.'),
   ]),
   updateBlinkAdvanceStatus
 );
-
-/**
- * Get all Blink Advance information for a user
- * GET /api/blink-advances/user/:userId
- */
-router.get('/user/:userId', authMiddleware, getUserBlinkAdvances);
 
 export default router;
 

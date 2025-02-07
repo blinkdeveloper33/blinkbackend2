@@ -9,41 +9,53 @@ import { AuthenticatedRequest } from '../middleware/authMiddleware';
 /**
  * Creates a new BlinkAdvance request.
  */
-export const createBlinkAdvance = async (req: Request, res: Response): Promise<void> => {
-  const { requestedAmount, transferSpeed, repayDate, bankAccountId } = req.body;
-  const userId = (req as any).user.id; // Assuming authMiddleware sets req.user
+export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { transferSpeed, repaymentDate, bankAccountId } = req.body;
+  
+  if (!req.user) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User not found.',
+    });
+    return;
+  }
+  
+  const userId = req.user.id;
 
   try {
-    // Validate requestedAmount
-    if (requestedAmount < 100 || requestedAmount > 300) {
-      res.status(400).json({
-        success: false,
-        error: 'Requested amount must be between $100 and $300.',
-      });
-      return;
-    }
+    // Fixed amount of $200
+    const amount = 200;
 
     // Validate transferSpeed
-    if (!['Instant', 'Normal'].includes(transferSpeed)) {
+    if (!['Instant', 'Standard'].includes(transferSpeed)) {
       res.status(400).json({
         success: false,
-        error: "Transfer speed must be either 'Instant' or 'Normal'.",
+        error: "Transfer speed must be either 'Instant' or 'Standard'.",
       });
       return;
     }
 
-    // Validate repayDate is within 31 days from now
+    // Validate repaymentDate is within 31 days from now
     const today = new Date();
-    const repay = new Date(repayDate);
-    const maxRepayDate = new Date(today.getTime() + 31 * 24 * 60 * 60 * 1000); // 31 days from now
+    const repayDate = new Date(repaymentDate);
+    const maxRepayDate = new Date(today.getTime() + 31 * 24 * 60 * 60 * 1000);
 
-    if (repay > maxRepayDate) {
+    if (repayDate > maxRepayDate) {
       res.status(400).json({
         success: false,
-        error: 'Repay date must be within 31 days from today.',
+        error: 'Repayment date must be within 31 days from today.',
       });
       return;
     }
+
+    // Calculate base fee based on transfer speed
+    const baseFee = transferSpeed === 'Instant' ? 24.99 : 19.99;
+    
+    // Calculate discount based on repayment date
+    // If repayment is within 7 days, apply 10% discount
+    const daysUntilRepayment = Math.ceil((repayDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    const discountApplied = daysUntilRepayment <= 7 ? 0.10 : 0;
+    const finalFee = baseFee * (1 - discountApplied);
 
     // Check if the user has the specified bank account
     const { data: bankAccount, error: bankError } = await supabase
@@ -61,61 +73,78 @@ export const createBlinkAdvance = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    // Insert the new BlinkAdvance record with .select('*') to retrieve the inserted record
-    const { data, error } = await supabase
+    // Check if user has any active advances
+    const { data: activeAdvances, error: activeError } = await supabase
+      .from('blink_advances')
+      .select('*')
+      .eq('user_id', userId)
+      .in('status', ['pending', 'approved', 'disbursed'])
+      .limit(1);
+
+    if (activeError) {
+      throw activeError;
+    }
+
+    if (activeAdvances && activeAdvances.length > 0) {
+      res.status(400).json({
+        success: false,
+        error: 'You already have an active advance. Please repay it before requesting a new one.',
+      });
+      return;
+    }
+
+    // Insert the new BlinkAdvance record
+    const { data: newAdvance, error: insertError } = await supabase
       .from('blink_advances')
       .insert([
         {
           user_id: userId,
           bank_account_id: bankAccountId,
-          requested_amount: requestedAmount,
+          amount: amount,
           transfer_speed: transferSpeed,
-          repay_date: repayDate,
-          // fee is auto-generated via database trigger or default value
-          // status defaults to 'requested' via database default
+          base_fee: baseFee,
+          discount_applied: discountApplied,
+          final_fee: finalFee,
+          repayment_date: repaymentDate,
+          status: 'pending',
+          is_early_repayment: daysUntilRepayment <= 7
         },
       ])
-      .select('*') // Ensures the inserted record is returned
+      .select('*')
       .single();
 
-    // Log the response from Supabase for debugging purposes
-    logger.info(`Supabase Insert Data: ${JSON.stringify(data)}`);
-    logger.info(`Supabase Insert Error: ${bankError ? (bankError as unknown as Error).message : 'No error'}`);
-
-    if (error) {
-      throw error;
+    if (insertError) {
+      throw insertError;
     }
 
     res.status(201).json({
       success: true,
       message: 'BlinkAdvance request created successfully.',
-      blinkAdvance: data, // Now correctly populated
+      advance: newAdvance,
     });
   } catch (error) {
-    // Type Guard: Check if error is an instance of Error
-    if (error instanceof Error) {
-      logger.error(`Create BlinkAdvance Error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to create BlinkAdvance request.',
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined, // Avoid exposing error details in production
-      });
-    } else {
-      // Handle non-Error types
-      logger.error('Create BlinkAdvance Error: Unknown error occurred.');
-      res.status(500).json({
-        success: false,
-        error: 'Failed to create BlinkAdvance request.',
-      });
-    }
+    logger.error('Create BlinkAdvance Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create BlinkAdvance request.',
+      details: process.env.NODE_ENV === 'development' ? error : undefined,
+    });
   }
 };
 
 /**
- * Retrieves all BlinkAdvance records for the authenticated user.
+ * Retrieves all BlinkAdvances for the authenticated user.
  */
-export const getBlinkAdvances = async (req: Request, res: Response): Promise<void> => {
-  const userId = (req as any).user.id; // Assuming authMiddleware sets req.user
+export const getBlinkAdvances = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if (!req.user) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User not found.',
+    });
+    return;
+  }
+
+  const userId = req.user.id;
 
   try {
     const { data, error } = await supabase
@@ -130,31 +159,31 @@ export const getBlinkAdvances = async (req: Request, res: Response): Promise<voi
 
     res.status(200).json({
       success: true,
-      blinkAdvances: data,
+      advances: data,
     });
   } catch (error) {
-    if (error instanceof Error) {
-      logger.error(`Get BlinkAdvances Error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to retrieve BlinkAdvance records.',
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined,
-      });
-    } else {
-      logger.error('Get BlinkAdvances Error: Unknown error occurred.');
-      res.status(500).json({
-        success: false,
-        error: 'Failed to retrieve BlinkAdvance records.',
-      });
-    }
+    logger.error('Get BlinkAdvances Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve BlinkAdvance records.',
+      details: process.env.NODE_ENV === 'development' ? error : undefined,
+    });
   }
 };
 
 /**
- * Retrieves a single BlinkAdvance record by ID for the authenticated user.
+ * Retrieves a specific BlinkAdvance by ID.
  */
-export const getBlinkAdvanceById = async (req: Request, res: Response): Promise<void> => {
-  const userId = (req as any).user.id;
+export const getBlinkAdvanceById = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if (!req.user) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User not found.',
+    });
+    return;
+  }
+
+  const userId = req.user.id;
   const { id } = req.params;
 
   try {
@@ -166,7 +195,7 @@ export const getBlinkAdvanceById = async (req: Request, res: Response): Promise<
       .single();
 
     if (error) {
-      if (error.code === 'PGRST116') { // No rows found
+      if (error.code === 'PGRST116') {
         res.status(404).json({
           success: false,
           error: 'BlinkAdvance record not found.',
@@ -178,56 +207,53 @@ export const getBlinkAdvanceById = async (req: Request, res: Response): Promise<
 
     res.status(200).json({
       success: true,
-      blinkAdvance: data,
+      advance: data,
     });
   } catch (error) {
-    if (error instanceof Error) {
-      logger.error(`Get BlinkAdvance By ID Error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to retrieve BlinkAdvance record.',
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined,
-      });
-    } else {
-      logger.error('Get BlinkAdvance By ID Error: Unknown error occurred.');
-      res.status(500).json({
-        success: false,
-        error: 'Failed to retrieve BlinkAdvance record.',
-      });
-    }
+    logger.error('Get BlinkAdvance By ID Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve BlinkAdvance record.',
+      details: process.env.NODE_ENV === 'development' ? error : undefined,
+    });
   }
 };
 
 /**
- * Updates the status of a BlinkAdvance record.
- * Only certain status transitions are allowed.
+ * Updates the status of a BlinkAdvance.
  */
-export const updateBlinkAdvanceStatus = async (req: Request, res: Response): Promise<void> => {
-  const userId = (req as any).user.id;
+export const updateBlinkAdvanceStatus = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if (!req.user) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User not found.',
+    });
+    return;
+  }
+
+  const userId = req.user.id;
   const { id } = req.params;
-  const { status } = req.body;
+  const { status, reference } = req.body;
 
-  // Define allowed status transitions
-  const allowedStatuses = ['approved', 'funded', 'repaid', 'canceled'];
-
-  if (!allowedStatuses.includes(status)) {
+  const validStatuses = ['approved', 'disbursed', 'repaid', 'defaulted', 'cancelled'];
+  if (!validStatuses.includes(status)) {
     res.status(400).json({
       success: false,
-      error: `Status must be one of: ${allowedStatuses.join(', ')}.`,
+      error: `Status must be one of: ${validStatuses.join(', ')}.`,
     });
     return;
   }
 
   try {
-    // Fetch the existing BlinkAdvance
-    const { data: existingAdvance, error: fetchError } = await supabase
+    // Fetch current advance
+    const { data: currentAdvance, error: fetchError } = await supabase
       .from('blink_advances')
       .select('*')
       .eq('id', id)
       .eq('user_id', userId)
       .single();
 
-    if (fetchError || !existingAdvance) {
+    if (fetchError || !currentAdvance) {
       res.status(404).json({
         success: false,
         error: 'BlinkAdvance record not found.',
@@ -235,58 +261,108 @@ export const updateBlinkAdvanceStatus = async (req: Request, res: Response): Pro
       return;
     }
 
-    // Define valid transitions
+    // Define valid status transitions
     const validTransitions: { [key: string]: string[] } = {
-      requested: ['approved', 'canceled'],
-      approved: ['funded', 'canceled'],
-      funded: ['repaid', 'canceled'],
-      // Other transitions can be added as needed
+      pending: ['approved', 'cancelled'],
+      approved: ['disbursed', 'cancelled'],
+      disbursed: ['repaid', 'defaulted'],
+      repaid: [],
+      defaulted: [],
+      cancelled: [],
     };
 
-    const currentStatus = existingAdvance.status;
-    const possibleTransitions = validTransitions[currentStatus] || [];
-
-    if (!possibleTransitions.includes(status)) {
+    const allowedTransitions = validTransitions[currentAdvance.status] || [];
+    if (!allowedTransitions.includes(status)) {
       res.status(400).json({
         success: false,
-        error: `Invalid status transition from '${currentStatus}' to '${status}'.`,
+        error: `Cannot transition from ${currentAdvance.status} to ${status}.`,
       });
       return;
     }
 
-    // Update the status with .select('*') to retrieve the updated record
-    const { data, error } = await supabase
+    // Prepare update data
+    const updateData: any = { status };
+    
+    // Add timestamp based on status
+    if (status === 'approved') {
+      updateData.approved_at = new Date().toISOString();
+      updateData.processing_reference = reference;
+    } else if (status === 'disbursed') {
+      updateData.disbursed_at = new Date().toISOString();
+      updateData.disbursement_reference = reference;
+    } else if (status === 'repaid') {
+      updateData.repaid_at = new Date().toISOString();
+      updateData.repayment_reference = reference;
+    }
+
+    // Update the advance
+    const { data: updatedAdvance, error: updateError } = await supabase
       .from('blink_advances')
-      .update({ status })
+      .update(updateData)
       .eq('id', id)
       .eq('user_id', userId)
-      .select('*') // Retrieve the updated record
+      .select('*')
       .single();
 
-    if (error) {
-      throw error;
+    if (updateError) {
+      throw updateError;
     }
 
     res.status(200).json({
       success: true,
       message: 'BlinkAdvance status updated successfully.',
-      blinkAdvance: data,
+      advance: updatedAdvance,
     });
   } catch (error) {
-    if (error instanceof Error) {
-      logger.error(`Update BlinkAdvance Status Error: ${error.message}`);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to update BlinkAdvance status.',
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined,
-      });
-    } else {
-      logger.error('Update BlinkAdvance Status Error: Unknown error occurred.');
-      res.status(500).json({
-        success: false,
-        error: 'Failed to update BlinkAdvance status.',
-      });
+    logger.error('Update BlinkAdvance Status Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update BlinkAdvance status.',
+      details: process.env.NODE_ENV === 'development' ? error : undefined,
+    });
+  }
+};
+
+/**
+ * Checks if a user has any active advances.
+ */
+export const checkActiveAdvance = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if (!req.user) {
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized: User not found.',
+    });
+    return;
+  }
+
+  const userId = req.user.id;
+
+  try {
+    const { data, error } = await supabase
+      .from('blink_advances')
+      .select('*')
+      .eq('user_id', userId)
+      .in('status', ['pending', 'approved', 'disbursed'])
+      .limit(1);
+
+    if (error) {
+      throw error;
     }
+
+    const hasActiveAdvance = data && data.length > 0;
+
+    res.status(200).json({
+      success: true,
+      hasActiveAdvance,
+      activeAdvance: hasActiveAdvance ? data[0] : null,
+    });
+  } catch (error) {
+    logger.error('Check Active Advance Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check for active advances.',
+      details: process.env.NODE_ENV === 'development' ? error : undefined,
+    });
   }
 };
 
@@ -341,70 +417,6 @@ export const getBlinkAdvanceApprovalStatus = async (req: AuthenticatedRequest, r
       success: false,
       error: 'Failed to retrieve Blink Advance approval status.',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined,
-    });
-  }
-};
-
-/**
- * Checks if the authenticated user has an active Blink Advance.
- */
-export const checkActiveBlinkAdvance = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const userId = req.user?.id;
-
-  if (!userId) {
-    res.status(401).json({
-      success: false,
-      error: 'Unauthorized: User not found.',
-    });
-    return;
-  }
-
-  try {
-    const { data, error } = await supabase
-      .from('blink_advances')
-      .select('id, requested_amount, transfer_speed, fee, repay_date, disbursed_at')
-      .eq('user_id', userId)
-      .not('disbursed_at', 'is', null)
-      .is('repaid_at', null)
-      .order('disbursed_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST116') {
-        // No active Blink Advance found
-        res.status(200).json({
-          success: true,
-          data: {
-            hasActiveAdvance: false
-          }
-        });
-        return;
-      }
-      throw error;
-    }
-
-    res.status(200).json({
-      success: true,
-      data: {
-        hasActiveAdvance: true,
-        activeAdvance: {
-          id: data.id,
-          requestedAmount: data.requested_amount,
-          transferSpeed: data.transfer_speed,
-          fee: data.fee,
-          repayDate: data.repay_date,
-          disbursedAt: data.disbursed_at
-        }
-      }
-    });
-  } catch (error: any) {
-    logger.error('Check Active Blink Advance Error:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to check for active Blink Advance.',
-      details: error.message, // Temporarily include error details
-      stack: error.stack // Temporarily include stack trace
     });
   }
 };

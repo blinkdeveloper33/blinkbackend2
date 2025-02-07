@@ -96,13 +96,23 @@ export interface BlinkAdvance {
   id: string;
   user_id: string;
   bank_account_id: string;
-  requested_amount: number;
-  transfer_speed: 'Instant' | 'Normal';
-  fee: number;
-  repay_date: string; // 'YYYY-MM-DD'
-  status: 'requested' | 'approved' | 'funded' | 'repaid' | 'canceled';
+  amount: number;
+  transfer_speed: 'Instant' | 'Standard';
+  base_fee: number;
+  discount_applied: number;
+  final_fee: number;
+  requested_at: string;
+  approved_at?: string | null;
+  disbursed_at?: string | null;
+  repayment_date: string;
+  repaid_at?: string | null;
+  status: 'pending' | 'approved' | 'disbursed' | 'repaid' | 'defaulted' | 'cancelled';
+  processing_reference?: string | null;
+  disbursement_reference?: string | null;
+  repayment_reference?: string | null;
+  is_early_repayment: boolean;
   created_at: string;
-  updated_at?: string | null;
+  updated_at: string;
 }
 
 /**
@@ -233,4 +243,122 @@ export interface CustomTransactionsSyncResponse {
   removed: RemovedTransaction[];
   next_cursor: string;
   has_more: boolean;
+}
+
+// Transfer Authorization Types
+export interface TransferAuthorizationUser {
+  legal_name: string;
+  phone_number?: string;
+  email_address?: string;
+  address?: {
+    street?: string;
+    city?: string;
+    region?: string;
+    postal_code?: string;
+    country?: string;
+  };
+}
+
+export interface TransferAuthorizationRequest {
+  access_token: string;
+  account_id: string;
+  type: 'debit' | 'credit';
+  network: 'ach' | 'same-day-ach' | 'rtp' | 'wire';
+  amount: string;
+  ach_class?: 'ccd' | 'ppd' | 'tel' | 'web';
+  user: TransferAuthorizationUser;
+  device?: {
+    ip_address?: string;
+    user_agent?: string;
+  };
+  wire_details?: {
+    message_to_beneficiary?: string;
+  };
+  iso_currency_code?: string;
+  idempotency_key?: string;
+  user_present?: boolean;
+}
+
+export interface TransferAuthorizationDecisionRationale {
+  code: 'NSF' | 'RISK' | 'TRANSFER_LIMIT_REACHED' | 'MANUALLY_VERIFIED_ITEM' | 'ITEM_LOGIN_REQUIRED' | 'PAYMENT_PROFILE_LOGIN_REQUIRED' | 'ERROR' | 'MIGRATED_ACCOUNT_ITEM' | null;
+  description: string;
+}
+
+export interface TransferAuthorization {
+  id: string;
+  created: string;
+  decision: 'approved' | 'declined' | 'user_action_required';
+  decision_rationale: TransferAuthorizationDecisionRationale | null;
+  proposed_transfer: {
+    ach_class?: string;
+    account_id: string;
+    funding_account_id?: string;
+    type: 'debit' | 'credit';
+    user: TransferAuthorizationUser;
+    amount: string;
+    network: string;
+    iso_currency_code: string;
+    originator_client_id?: string;
+  };
+}
+
+export interface TransferCreateRequest {
+  access_token: string;
+  account_id: string;
+  authorization_id: string;
+  amount?: string;
+  description: string;
+  metadata?: Record<string, string>;
+  test_clock_id?: string;
+  facilitator_fee?: string;
+}
+
+export interface Transfer {
+  id: string;
+  authorization_id: string;
+  ach_class: 'ccd' | 'ppd' | 'tel' | 'web';
+  account_id: string;
+  funding_account_id: string | null;
+  ledger_id: string | null;
+  type: 'debit' | 'credit';
+  user: TransferAuthorizationUser;
+  amount: string;
+  description: string;
+  created: string;
+  status: 'pending' | 'posted' | 'settled' | 'funds_available' | 'cancelled' | 'failed' | 'returned';
+  sweep_status: 'unswept' | 'swept' | 'swept_settled' | 'return_swept' | 'funds_available' | null;
+  network: 'ach' | 'same-day-ach' | 'rtp' | 'wire';
+  wire_details?: {
+    message_to_beneficiary?: string;
+  } | null;
+  cancellable: boolean;
+  failure_reason: {
+    failure_code: string | null;
+    description: string;
+  } | null;
+  metadata?: Record<string, string>;
+  iso_currency_code: string;
+  standard_return_window: string | null;
+  unauthorized_return_window: string | null;
+  expected_settlement_date: string | null;
+  originator_client_id: string | null;
+  refunds: Array<{
+    id: string;
+    transfer_id: string;
+    amount: string;
+    status: 'pending' | 'posted' | 'cancelled' | 'failed' | 'settled' | 'returned';
+    failure_reason: {
+      failure_code: string | null;
+      description: string;
+    } | null;
+    ledger_id: string | null;
+    created: string;
+  }>;
+  recurring_transfer_id: string | null;
+  expected_sweep_settlement_schedule?: Array<{
+    sweep_settlement_date: string;
+    swept_settled_amount: string;
+  }>;
+  facilitator_fee?: string;
+  network_trace_id: string | null;
 }

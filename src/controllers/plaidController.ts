@@ -91,6 +91,21 @@ interface TransactionWithBankAccount {
   bank_accounts: BankAccountDetails;
 }
 
+interface TransactionAnalysis {
+  topMerchants: Array<{
+    merchant_name: string;
+    frequency: number;
+  }>;
+  inflowProviders: Array<{
+    provider: string;
+    total_amount: number;
+  }>;
+  mostExpensiveCategory: {
+    category: string;
+    total_amount: number;
+  };
+}
+
 /**
  * Handles Plaid webhook events.
  * @param req - Express Request object
@@ -100,6 +115,31 @@ export const handleWebhook = async (req: Request, res: Response): Promise<void> 
   try {
     const signature = req.headers['x-plaid-signature'] as string;
     const payload = JSON.stringify(req.body);
+    const {
+      webhook_type,
+      webhook_code,
+      asset_report_id
+    } = req.body;
+
+    logger.info(`Received webhook: ${webhook_type} - ${webhook_code}`);
+
+    // Handle Asset Report ready webhook
+    if (webhook_type === 'ASSETS' && webhook_code === 'PRODUCT_READY' && asset_report_id) {
+      // Update the asset report status in the database
+      const { error } = await supabase
+        .from('asset_reports')
+        .update({ status: 'ready', updated_at: new Date().toISOString() })
+        .eq('asset_report_id', asset_report_id);
+
+      if (error) {
+        logger.error('Error updating asset report status:', error);
+        throw error;
+      }
+
+      logger.info(`Asset report ${asset_report_id} is ready`);
+    }
+
+    // Verify the webhook signature
     const expectedSignature = crypto
       .createHmac('sha256', config.PLAID_WEBHOOK_SECRET)
       .update(payload)
@@ -107,77 +147,14 @@ export const handleWebhook = async (req: Request, res: Response): Promise<void> 
 
     if (signature !== expectedSignature) {
       logger.warn('Invalid webhook signature');
-      res.status(400).json({ 
-        success: false,
-        error: 'Invalid signature' 
-      });
+      res.status(400).json({ error: 'Invalid signature' });
       return;
     }
 
-    const { webhook_type, webhook_code, item_id } = req.body;
-
-    logger.info(`Received webhook: Type=${webhook_type}, Code=${webhook_code}, Item ID=${item_id}`);
-
-    // Handle specific webhook events
-    if (webhook_type === 'TRANSACTIONS') {
-      if (['SYNC_UPDATES_AVAILABLE', 'RECURRING_TRANSACTIONS_UPDATE'].includes(webhook_code)) {
-        // Find the user_id associated with the item_id
-        const { data: bankAccount, error: bankError } = await supabase
-          .from('bank_accounts')
-          .select('user_id')
-          .eq('plaid_item_id', item_id)
-          .single();
-
-        if (bankError || !bankAccount) {
-          logger.error(`Failed to find bank account for item_id: ${item_id}`, bankError?.message);
-          res.status(400).json({ 
-            success: false,
-            error: 'User not found for the provided item_id' 
-          });
-          return;
-        }
-
-        const userId = bankAccount.user_id;
-
-        try {
-          const stats = await syncTransactionsForUser(userId);
-          // Also fetch and store balances
-          await fetchAndStoreAccountBalances(userId);
-
-          logger.info(`Synchronization triggered for userId: ${userId}. Stats: Added=${stats.added}, Modified=${stats.modified}, Removed=${stats.removed}`);
-          res.status(200).json({ 
-            success: true, 
-            message: 'Webhook received and synchronization triggered' 
-          });
-        } catch (syncError: any) {
-          logger.error(`Error synchronizing transactions for userId: ${userId}`, syncError.message);
-          res.status(500).json({ 
-            success: false, 
-            error: 'Failed to synchronize transactions', 
-            details: syncError.message 
-          });
-        }
-
-      } else {
-        logger.info(`Unhandled TRANSACTIONS webhook_code: ${webhook_code}`);
-        res.status(200).json({ 
-          success: true,
-          message: 'Webhook received' 
-        });
-      }
-    } else {
-      logger.info(`Unhandled webhook_type: ${webhook_type}, webhook_code: ${webhook_code}`);
-      res.status(200).json({ 
-        success: true,
-        message: 'Webhook received' 
-      });
-    }
-  } catch (error: any) {
-    logger.error('Webhook Error:', error.message);
-    res.status(500).json({ 
-      success: false,
-      error: 'Internal Server Error' 
-    });
+    res.json({ received: true });
+  } catch (error) {
+    logger.error('Error processing webhook:', error);
+    res.status(500).json({ error: 'Failed to process webhook' });
   }
 };
 
@@ -192,11 +169,15 @@ export const createLinkToken = async (req: Request, res: Response): Promise<void
     const request = {
       user: { client_user_id: userId },
       client_name: config.CLIENT_NAME || 'Blink',
-      products: [Products.Transactions],
-      country_codes: [CountryCode.Us], // Fixed: Changed US to Us
+      products: [Products.Transactions, Products.Assets, Products.Auth, Products.Transfer],
+      country_codes: [CountryCode.Us],
       language: 'en',
       webhook: config.PLAID_WEBHOOK_URL,
+      transactions: {
+        days_requested: 730 // Maximum historical data (2 years)
+      }
     };
+    
     const createTokenResponse = await plaidClient.linkTokenCreate(request);
     res.status(200).json({ 
       success: true,
@@ -2143,5 +2124,764 @@ export const getRecurringExpenses = async (req: AuthenticatedRequest, res: Respo
     });
   }
 };
+
+export const syncTransactions = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user.id;
+    const { cursor, count = 100, options = {} } = req.body;
+    
+    // Fetch the user's bank accounts
+    const { data: bankAccounts, error: bankError } = await supabase
+      .from('bank_accounts')
+      .select('plaid_access_token')
+      .eq('user_id', userId);
+
+    if (bankError || !bankAccounts || bankAccounts.length === 0) {
+      res.status(400).json({
+        success: false,
+        error: 'No bank accounts found for user'
+      });
+      return;
+    }
+
+    // Process each bank account's transactions
+    const allResults: {
+      added: PlaidApiTransaction[];
+      modified: PlaidApiTransaction[];
+      removed: RemovedTransaction[];
+      has_more: boolean;
+      next_cursor: string | null;
+    } = {
+      added: [],
+      modified: [],
+      removed: [],
+      has_more: false,
+      next_cursor: cursor
+    };
+
+    for (const account of bankAccounts) {
+      const request = {
+        access_token: account.plaid_access_token,
+        cursor,
+        count,
+        options: {
+          include_original_description: true,
+          ...options
+        }
+      };
+
+      const response = await plaidClient.transactionsSync(request);
+      
+      // Store transactions in our database
+      if (response.data.added.length > 0 || 
+          response.data.modified.length > 0 || 
+          response.data.removed.length > 0) {
+        await storeTransactionUpdates(response.data);
+      }
+
+      // Merge results
+      allResults.added = [...allResults.added, ...response.data.added];
+      allResults.modified = [...allResults.modified, ...response.data.modified];
+      allResults.removed = [...allResults.removed, ...response.data.removed];
+      allResults.has_more = allResults.has_more || response.data.has_more;
+      if (response.data.has_more) {
+        allResults.next_cursor = response.data.next_cursor;
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      ...allResults,
+      request_id: Date.now().toString()
+    });
+  } catch (error: any) {
+    logger.error('Error syncing transactions:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to sync transactions',
+      details: error.response?.data || error.message
+    });
+  }
+};
+
+async function storeTransactionUpdates(data: {
+  added: any[];
+  modified: any[];
+  removed: any[];
+}) {
+  const { data: bankAccounts, error } = await supabase
+    .from('bank_accounts')
+    .select('id, account_id');
+
+  if (error || !bankAccounts) {
+    logger.error('Error fetching bank accounts:', error);
+    throw new Error('Failed to fetch bank accounts');
+  }
+  
+  const accountMap = new Map(
+    bankAccounts.map(acc => [acc.account_id, acc.id])
+  );
+
+  // Handle added and modified transactions
+  const upsertTransactions = [...data.added, ...data.modified]
+    .map(tx => ({
+      transaction_id: tx.transaction_id,
+      bank_account_id: accountMap.get(tx.account_id),
+      amount: tx.amount,
+      date: tx.date,
+      description: tx.name,
+      original_description: tx.original_description,
+      category: tx.personal_finance_category?.detailed || 'UNCATEGORIZED',
+      merchant_name: tx.merchant_name,
+      pending: tx.pending,
+      account_id: tx.account_id
+    }));
+
+  if (upsertTransactions.length > 0) {
+    await supabase
+      .from('transactions')
+      .upsert(upsertTransactions, { onConflict: 'transaction_id' });
+  }
+
+  // Handle removed transactions
+  if (data.removed.length > 0) {
+    const removedIds = data.removed.map(tx => tx.transaction_id);
+    await supabase
+      .from('transactions')
+      .delete()
+      .in('transaction_id', removedIds);
+  }
+}
+
+export const getTransactionAnalysis = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
+    }
+
+    // Fetch all transactions for the user
+    const { data: transactions, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId);
+
+    if (error) {
+      logger.error('Error fetching transactions:', error);
+      res.status(500).json({ error: 'Failed to fetch transactions' });
+      return;
+    }
+
+    // Process merchants frequency
+    const merchantFrequency: { [key: string]: number } = {};
+    transactions.forEach(transaction => {
+      if (transaction.merchant_name) {
+        merchantFrequency[transaction.merchant_name] = (merchantFrequency[transaction.merchant_name] || 0) + 1;
+      }
+    });
+
+    // Get top 3 merchants
+    const topMerchants = Object.entries(merchantFrequency)
+      .map(([merchant_name, frequency]) => ({ merchant_name, frequency }))
+      .sort((a, b) => b.frequency - a.frequency)
+      .slice(0, 3);
+
+    // Process inflow providers (transactions with negative amounts are income)
+    const inflowProviders: { [key: string]: number } = {};
+    transactions.forEach(transaction => {
+      if (transaction.amount < 0 && transaction.merchant_name) {
+        inflowProviders[transaction.merchant_name] = (inflowProviders[transaction.merchant_name] || 0) + Math.abs(transaction.amount);
+      }
+    });
+
+    // Format inflow providers
+    const inflowProvidersArray = Object.entries(inflowProviders)
+      .map(([provider, total_amount]) => ({ provider, total_amount }))
+      .sort((a, b) => b.total_amount - a.total_amount);
+
+    // Process categories and their total amounts
+    const categoryTotals: { [key: string]: number } = {};
+    transactions.forEach(transaction => {
+      if (transaction.amount > 0 && transaction.category) {
+        categoryTotals[transaction.category] = (categoryTotals[transaction.category] || 0) + transaction.amount;
+      }
+    });
+
+    // Get most expensive category
+    const mostExpensiveCategory = Object.entries(categoryTotals)
+      .reduce<{ category: string; total_amount: number } | null>((max, [category, amount]) => {
+        if (!max || amount > max.total_amount) {
+          return { category, total_amount: amount };
+        }
+        return max;
+      }, null);
+
+    const analysis: TransactionAnalysis = {
+      topMerchants,
+      inflowProviders: inflowProvidersArray,
+      mostExpensiveCategory: mostExpensiveCategory || { category: 'No categories found', total_amount: 0 }
+    };
+
+    res.status(200).json(analysis);
+  } catch (error) {
+    logger.error('Error in transaction analysis:', error);
+    res.status(500).json({ error: 'Failed to analyze transactions' });
+  }
+};
+
+/**
+ * Syncs Plaid categories to our database
+ */
+async function syncCategoriesToDatabase(categories: Array<{
+  category_id: string;
+  group: string;
+  hierarchy: string[];
+}>): Promise<void> {
+  try {
+    // Prepare the data for upsert
+    const categoriesData = categories.map(category => ({
+      category_id: category.category_id,
+      category_group: category.group,
+      hierarchy: category.hierarchy,
+      updated_at: new Date().toISOString()
+    }));
+
+    // Upsert categories into the database
+    const { error } = await supabase
+      .from('plaid_categories')
+      .upsert(categoriesData, {
+        onConflict: 'category_id',
+        ignoreDuplicates: false
+      });
+
+    if (error) {
+      throw error;
+    }
+
+    logger.info(`Successfully synced ${categories.length} Plaid categories to database`);
+  } catch (error) {
+    logger.error('Error syncing categories to database:', error);
+    throw error;
+  }
+}
+
+// Add getCategories controller function
+export const getCategories = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const response = await plaidClient.categoriesGet({});
+    const categories = response.data.categories;
+
+    // Sync categories to database
+    await syncCategoriesToDatabase(categories);
+
+    res.status(200).json({
+      success: true,
+      categories: categories,
+      request_id: response.data.request_id
+    });
+  } catch (error: any) {
+    logger.error('Error fetching categories:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch categories',
+      details: error.message
+    });
+  }
+};
+
+/**
+ * Create a transfer authorization
+ * @param req - Express Request object
+ * @param res - Express Response object
+ */
+export const createTransferAuthorization = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      access_token,
+      account_id,
+      type,
+      network,
+      amount,
+      ach_class,
+      user,
+      device,
+      ledger_id,
+      iso_currency_code,
+      idempotency_key,
+      user_present,
+      originator_client_id,
+      test_clock_id,
+      ruleset_key
+    } = req.body;
+
+    // Validate required fields
+    if (!access_token || !account_id || !type || !network || !amount || !user?.legal_name) {
+      res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        details: 'access_token, account_id, type, network, amount, and user.legal_name are required'
+      });
+      return;
+    }
+
+    // Validate amount range ($200-$250)
+    const numericAmount = parseFloat(amount);
+    if (numericAmount < 200 || numericAmount > 250) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid amount',
+        details: 'Amount must be between $200 and $250'
+      });
+      return;
+    }
+
+    // Validate network type
+    const allowedNetworks = ['ach', 'same-day-ach', 'rtp'];
+    if (!allowedNetworks.includes(network)) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid network type',
+        details: 'Network must be one of: ach, same-day-ach, rtp'
+      });
+      return;
+    }
+
+    // Check RTP capability if network is rtp
+    if (network === 'rtp') {
+      const isRtpCapable = await getTransferCapabilities(access_token, account_id);
+      if (!isRtpCapable) {
+        res.status(400).json({
+          success: false,
+          error: 'RTP not supported',
+          details: 'The account does not support RTP transfers'
+        });
+        return;
+      }
+    }
+
+    // Create the request object with required fields
+    const request: any = {
+      access_token,
+      account_id,
+      type,
+      network,
+      amount,
+      user: {
+        legal_name: user.legal_name
+      }
+    };
+
+    // Add optional fields if they exist
+    if (ach_class) request.ach_class = ach_class;
+    if (ledger_id) request.ledger_id = ledger_id;
+    if (iso_currency_code) request.iso_currency_code = iso_currency_code;
+    if (idempotency_key) request.idempotency_key = idempotency_key;
+    if (user_present !== undefined) request.user_present = user_present;
+    if (originator_client_id) request.originator_client_id = originator_client_id;
+    if (test_clock_id) request.test_clock_id = test_clock_id;
+    if (ruleset_key) request.ruleset_key = ruleset_key;
+
+    // Add optional user fields if they exist
+    if (user.phone_number) request.user.phone_number = user.phone_number;
+    if (user.email_address) request.user.email_address = user.email_address;
+    if (user.address) request.user.address = user.address;
+
+    // Add device information if provided
+    if (device) request.device = device;
+
+    // Call Plaid API to create transfer authorization
+    const response = await plaidClient.transferAuthorizationCreate(request);
+
+    res.status(200).json({
+      success: true,
+      authorization: response.data.authorization
+    });
+  } catch (error: any) {
+    logger.error('Error creating transfer authorization:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      success: false,
+      error: 'Failed to create transfer authorization',
+      details: error.response?.data || error.message
+    });
+  }
+};
+
+/**
+ * Create a transfer
+ * @param req - Express Request object
+ * @param res - Express Response object
+ */
+export const createTransfer = async (req: Request, res: Response): Promise<void> => {
+  let bankAccount: any = null;
+  
+  try {
+    const userId = (req as any).user.id;
+    const {
+      account_id, // This is our bank_account.id
+      authorization_id,
+      amount,
+      description,
+      metadata,
+      test_clock_id,
+      facilitator_fee
+    } = req.body;
+
+    // Fetch the access token and Plaid account_id for the specified account
+    const { data, error: bankError } = await supabase
+      .from('bank_accounts')
+      .select('plaid_access_token, account_id, plaid_item_id')
+      .eq('id', account_id)
+      .eq('user_id', userId)
+      .single();
+
+    if (bankError || !data) {
+      res.status(400).json({
+        success: false,
+        error: 'Bank account not found or unauthorized'
+      });
+      return;
+    }
+
+    bankAccount = data;
+
+    const request = {
+      access_token: bankAccount.plaid_access_token,
+      account_id: bankAccount.account_id, // Use Plaid's account_id
+      authorization_id,
+      amount,
+      description,
+      metadata,
+      test_clock_id,
+      facilitator_fee
+    };
+
+    const response = await plaidClient.transferCreate(request);
+
+    res.status(200).json({
+      success: true,
+      transfer: response.data.transfer,
+      request_id: response.data.request_id
+    });
+  } catch (error: any) {
+    logger.error('Error creating transfer:', error.response?.data || error.message);
+    
+    // Handle specific Plaid errors
+    const plaidError = error.response?.data;
+    if (plaidError) {
+      switch (plaidError.error_code) {
+        case 'ITEM_LOGIN_REQUIRED':
+          res.status(400).json({
+            success: false,
+            error: 'Bank account needs to be re-authenticated',
+            error_code: 'ITEM_LOGIN_REQUIRED',
+            item_id: bankAccount?.plaid_item_id,
+            details: 'Please update your bank credentials to proceed with the transfer.'
+          });
+          break;
+        case 'INVALID_FIELD':
+          res.status(400).json({
+            success: false,
+            error: 'Invalid request parameters',
+            error_code: 'INVALID_FIELD',
+            details: plaidError.error_message
+          });
+          break;
+        default:
+          res.status(500).json({
+            success: false,
+            error: 'Failed to create transfer',
+            error_code: plaidError.error_code,
+            details: plaidError.error_message
+          });
+      }
+    } else {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to create transfer',
+        details: error.message
+      });
+    }
+  }
+};
+
+// Asset Report Types
+interface AssetReportOptions {
+  client_report_id?: string;
+  webhook?: string;
+  user?: {
+    client_user_id?: string;
+    first_name?: string;
+    middle_name?: string;
+    last_name?: string;
+    ssn?: string;
+    phone_number?: string;
+    email?: string;
+  };
+  require_all_items?: boolean;
+}
+
+// Add this helper function to check item status
+const checkItemStatus = async (access_token: string): Promise<boolean> => {
+  try {
+    const response = await plaidClient.itemGet({
+      access_token
+    });
+    
+    const availableProducts = response.data.item.available_products || [];
+    const billedProducts = response.data.item.billed_products || [];
+    const allProducts = [...availableProducts, ...billedProducts];
+    
+    logger.debug('Item products:', {
+      available: availableProducts,
+      billed: billedProducts,
+      itemId: response.data.item.item_id
+    });
+    
+    return allProducts.includes(Products.Assets);
+  } catch (error: any) {
+    logger.error('Error checking item status:', {
+      error: error.message,
+      plaidError: error.response?.data
+    });
+    return false;
+  }
+};
+
+export const createAssetReport = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { access_tokens, days_requested, options } = req.body;
+
+    // Enhanced request validation logging
+    logger.debug('Asset Report Request:', {
+      accessTokensPresent: !!access_tokens,
+      accessTokensLength: access_tokens?.length,
+      daysRequested: days_requested,
+      optionsPresent: !!options,
+      environment: config.PLAID_ENV
+    });
+
+    // Validate access_tokens
+    if (!Array.isArray(access_tokens) || access_tokens.length === 0) {
+      res.status(400).json({
+        success: false,
+        error: 'Failed to create asset report',
+        details: {
+          error_type: 'INVALID_INPUT',
+          error_code: 'MISSING_ACCESS_TOKENS',
+          error_message: 'At least one access token is required'
+        }
+      });
+      return;
+    }
+
+    // Validate days_requested
+    if (!days_requested || days_requested < 0 || days_requested > 731) {
+      res.status(400).json({
+        success: false,
+        error: 'Failed to create asset report',
+        details: {
+          error_type: 'INVALID_INPUT',
+          error_code: 'INVALID_DAYS_REQUESTED',
+          error_message: 'days_requested must be between 0 and 731'
+        }
+      });
+      return;
+    }
+
+    // Check if all items have the assets product enabled
+    logger.debug('Checking item status for all access tokens...');
+    const itemStatuses = await Promise.all(
+      access_tokens.map(async (token) => {
+        try {
+          const status = await checkItemStatus(token);
+          logger.debug('Item status check result:', { token: token.slice(-4), hasAssets: status });
+          return status;
+        } catch (error) {
+          logger.error('Error checking item status:', { token: token.slice(-4), error });
+          return false;
+        }
+      })
+    );
+
+    if (itemStatuses.some(status => !status)) {
+      res.status(400).json({
+        success: false,
+        error: 'Failed to create asset report',
+        details: {
+          error_type: 'INVALID_INPUT',
+          error_code: 'PRODUCT_NOT_ENABLED',
+          error_message: 'One or more items do not have the assets product enabled'
+        }
+      });
+      return;
+    }
+
+    // Start with a smaller days_requested value for testing
+    const testDaysRequested = Math.min(days_requested, 30);
+    logger.debug('Creating asset report with reduced days for testing:', { testDaysRequested });
+
+    const assetReportCreateResponse = await plaidClient.assetReportCreate({
+      access_tokens,
+      days_requested: testDaysRequested,
+      options: {
+        ...options,
+        webhook: options?.webhook || config.PLAID_WEBHOOK_URL,
+        client_report_id: options?.client_report_id || `report-${Date.now()}`
+      }
+    });
+
+    const { asset_report_token, asset_report_id, request_id } = assetReportCreateResponse.data;
+
+    logger.debug('Asset report created successfully:', {
+      asset_report_id,
+      request_id,
+      days_requested: testDaysRequested
+    });
+
+    // Store in database
+    const { error: dbError } = await supabase
+      .from('asset_reports')
+      .insert({
+        user_id: req.user?.id,
+        asset_report_token,
+        asset_report_id,
+        status: 'pending',
+        days_requested: testDaysRequested,
+        created_at: new Date().toISOString()
+      });
+
+    if (dbError) {
+      logger.error('Error storing asset report:', dbError);
+      throw dbError;
+    }
+
+    res.json({
+      success: true,
+      asset_report_token,
+      asset_report_id,
+      request_id,
+      days_requested: testDaysRequested
+    });
+
+  } catch (error: any) {
+    logger.error('Asset Report Creation Error:', {
+      error: error.message,
+      plaidError: error.response?.data,
+      stack: error.stack,
+      environment: config.PLAID_ENV
+    });
+    
+    // Enhanced error handling
+    if (error.response?.data) {
+      const plaidError = error.response.data;
+      res.status(400).json({
+        success: false,
+        error: 'Failed to create asset report',
+        details: {
+          error_type: plaidError.error_type,
+          error_code: plaidError.error_code,
+          error_message: plaidError.error_message,
+          display_message: plaidError.display_message,
+          request_id: plaidError.request_id,
+          documentation_url: `https://plaid.com/docs/errors/${plaidError.error_type}/#${plaidError.error_code}`
+        }
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to create asset report',
+        details: {
+          error_type: 'INTERNAL_SERVER_ERROR',
+          error_code: 'UNKNOWN_ERROR',
+          error_message: error.message,
+          suggestion: 'Please try with a smaller days_requested value or contact support'
+        }
+      });
+    }
+  }
+};
+
+// Add this after the checkItemStatus function
+export const getItem = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { access_token } = req.body;
+
+    if (!access_token) {
+      res.status(400).json({
+        success: false,
+        error: 'Access token is required'
+      });
+      return;
+    }
+
+    const response = await plaidClient.itemGet({
+      access_token
+    });
+
+    // Log the response for debugging
+    logger.debug('Item information retrieved:', {
+      itemId: response.data.item.item_id,
+      availableProducts: response.data.item.available_products,
+      billedProducts: response.data.item.billed_products,
+      products: response.data.item.products,
+      institutionId: response.data.item.institution_id
+    });
+
+    res.json({
+      success: true,
+      item: response.data.item,
+      status: response.data.status,
+      request_id: response.data.request_id
+    });
+
+  } catch (error: any) {
+    logger.error('Error getting item:', {
+      error: error.message,
+      plaidError: error.response?.data
+    });
+    
+    if (error.response?.data) {
+      const plaidError = error.response.data;
+      res.status(400).json({
+        success: false,
+        error: 'Failed to get item information',
+        details: {
+          error_type: plaidError.error_type,
+          error_code: plaidError.error_code,
+          error_message: plaidError.error_message,
+          display_message: plaidError.display_message,
+          request_id: plaidError.request_id
+        }
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get item information',
+        details: error.message
+      });
+    }
+  }
+};
+
+/**
+ * Get transfer capabilities for an account
+ * @param access_token - The Plaid access token
+ * @param account_id - The Plaid account ID
+ * @returns Promise<boolean> - Whether RTP is supported
+ */
+async function getTransferCapabilities(access_token: string, account_id: string): Promise<boolean> {
+  try {
+    const response = await plaidClient.transferCapabilitiesGet({
+      access_token,
+      account_id
+    });
+
+    return response.data.institution_supported_networks?.rtp?.credit || false;
+  } catch (error: any) {
+    logger.error('Error checking transfer capabilities:', error.response?.data || error.message);
+    return false;
+  }
+}
 
 

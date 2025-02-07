@@ -19,12 +19,21 @@ import {
   getSpendingAnalysis,
   getHistoricalSpending,
   getFinancialInsights,
-  getRecurringExpenses
+  getRecurringExpenses,
+  syncTransactions,
+  getTransactionAnalysis,
+  getCategories,
+  createTransferAuthorization,
+  createTransfer,
+  createAssetReport,
+  getItem
 } from '../controllers/plaidController';
 import authMiddleware from '../middleware/authMiddleware';
 import rateLimit from 'express-rate-limit';
 
-const router: Router = express.Router();
+// Create separate routers for public and protected routes
+const publicRouter: Router = express.Router();
+const protectedRouter: Router = express.Router();
 
 /**
  * Rate limiter for webhook endpoint
@@ -38,22 +47,14 @@ const webhookLimiter = rateLimit({
   }
 });
 
-/**
- * Webhook handler
- * No authentication, as it's from Plaid
- */
-router.post('/webhook', webhookLimiter, handleWebhook);
+// Public Routes
+publicRouter.post('/webhook', webhookLimiter, handleWebhook);
+publicRouter.post('/categories/get', getCategories);
 
-// Apply authentication middleware for all routes below
-router.use(authMiddleware);
-
-/**
- * Custom validation middleware
- */
+// Protected Routes with validation middleware
 const validate = (validations: ValidationChain[]) => {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     await Promise.all(validations.map(validation => validation.run(req)));
-
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       res.status(400).json({ 
@@ -66,16 +67,11 @@ const validate = (validations: ValidationChain[]) => {
   };
 };
 
-
-/**
- * Create link token endpoint
- */
-router.post(
+// Add all protected routes
+protectedRouter.post(
   '/create_link_token',
   validate([
-    body('userId')
-      .notEmpty()
-      .withMessage('User ID is required')
+    body('userId').notEmpty().withMessage('User ID is required')
   ]),
   createLinkToken
 );
@@ -83,7 +79,7 @@ router.post(
 /**
  * Exchange public token endpoint
  */
-router.post(
+protectedRouter.post(
   '/exchange_public_token',
   validate([
     body('publicToken')
@@ -99,7 +95,7 @@ router.post(
 /**
  * Sync transactions endpoint
  */
-router.post(
+protectedRouter.post(
   '/sync',
   validate([
     body('userId')
@@ -112,7 +108,7 @@ router.post(
 /**
  * Get transactions endpoint
  */
-router.post(
+protectedRouter.post(
   '/get_transactions',
   validate([
     body('userId')
@@ -148,7 +144,7 @@ router.post(
 /**
  * Sync balances endpoint
  */
-router.post(
+protectedRouter.post(
   '/sync_balances',
   validate([
     body('userId')
@@ -161,7 +157,7 @@ router.post(
 /**
  * Get recent transactions endpoint
  */
-router.get(
+protectedRouter.get(
   '/recent-transactions/:userId',
   authMiddleware,
   (req: Request, res: Response, next: NextFunction) => {
@@ -172,7 +168,7 @@ router.get(
 /**
  * Get current balances endpoint
  */
-router.get(
+protectedRouter.get(
   '/current-balances',
   authMiddleware,
   (req: Request, res: Response, next: NextFunction) => {
@@ -184,7 +180,7 @@ router.get(
  * Get all transactions for a user
  * GET /api/plaid/all-transactions
  */
-router.get(
+protectedRouter.get(
   '/all-transactions',
   authMiddleware,
   getAllTransactions
@@ -194,7 +190,7 @@ router.get(
  * Get Daily Transaction Summary
  * GET /api/plaid/daily-transaction-summary
  */
-router.get(
+protectedRouter.get(
   '/daily-transaction-summary',
   authMiddleware,
   getDailyTransactionSummary
@@ -204,7 +200,7 @@ router.get(
 * Get Spending Summary
 * GET /api/plaid/spending-summary
 */
-router.get(
+protectedRouter.get(
  '/spending-summary',
  authMiddleware,
  getSpendingSummary
@@ -214,7 +210,7 @@ router.get(
 * Get Transaction Category Analysis
 * GET /api/plaid/category-analysis
 */
-router.get(
+protectedRouter.get(
   '/category-analysis',
   authMiddleware,
   getTransactionCategoryAnalysis
@@ -223,7 +219,7 @@ router.get(
 /**
  * Get transaction details endpoint
  */
-router.get(
+protectedRouter.get(
   '/transactions/:transactionId',
   authMiddleware,
   getTransactionDetails
@@ -233,7 +229,7 @@ router.get(
  * Get comprehensive spending analysis
  * GET /api/plaid/spending-analysis
  */
-router.get(
+protectedRouter.get(
   '/spending-analysis',
   authMiddleware,
   getSpendingAnalysis
@@ -243,7 +239,7 @@ router.get(
  * Get historical spending totals
  * GET /api/plaid/historical-spending
  */
-router.get(
+protectedRouter.get(
   '/historical-spending',
   authMiddleware,
   getHistoricalSpending
@@ -253,7 +249,7 @@ router.get(
  * Get comprehensive financial insights
  * GET /api/plaid/financial-insights
  */
-router.get(
+protectedRouter.get(
   '/financial-insights',
   authMiddleware,
   getFinancialInsights
@@ -263,11 +259,156 @@ router.get(
  * Get recurring expenses analysis
  * GET /api/plaid/recurring-expenses
  */
-router.get(
+protectedRouter.get(
   '/recurring-expenses',
   authMiddleware,
   getRecurringExpenses
 );
 
-export default router;
+/**
+ * Sync transactions endpoint
+ */
+protectedRouter.post(
+  '/transactions/sync',
+  authMiddleware,
+  validate([
+    body('cursor').optional(),
+    body('count').optional().isInt({ min: 1, max: 500 }),
+    body('options').optional().isObject()
+  ]),
+  syncTransactions
+);
+
+/**
+ * Get transaction analysis
+ * GET /api/plaid/transaction-analysis
+ */
+protectedRouter.get('/transaction-analysis', authMiddleware, getTransactionAnalysis);
+
+/**
+ * Create transfer authorization endpoint
+ */
+protectedRouter.post(
+  '/transfer/authorization/create',
+  validate([
+    body('access_token').notEmpty().withMessage('Access token is required'),
+    body('account_id').notEmpty().withMessage('Account ID is required'),
+    body('type').isIn(['debit', 'credit']).withMessage('Type must be either debit or credit'),
+    body('network').isIn(['ach', 'same-day-ach', 'rtp']).withMessage('Network must be one of: ach, same-day-ach, rtp'),
+    body('amount')
+      .notEmpty()
+      .matches(/^\d+\.\d{2}$/)
+      .withMessage('Amount must be a decimal string with two digits of precision')
+      .custom((value) => {
+        const amount = parseFloat(value);
+        if (amount < 200 || amount > 250) {
+          throw new Error('Amount must be between $200 and $250');
+        }
+        return true;
+      }),
+    body('user.legal_name').notEmpty().withMessage('User legal name is required'),
+    body('ach_class')
+      .optional()
+      .equals('ccd')
+      .withMessage('Only CCD (Corporate Credit or Debit) is supported for bank account transfers')
+      .custom((value, { req }) => {
+        const network = req.body.network;
+        if (network.startsWith('ach') && !value) {
+          throw new Error('ACH class is required for ACH transfers and must be CCD');
+        }
+        return true;
+      }),
+    body('iso_currency_code').optional().isString().withMessage('Invalid currency code'),
+    body('idempotency_key')
+      .optional()
+      .isString()
+      .isLength({ max: 50 })
+      .withMessage('Idempotency key must not exceed 50 characters'),
+    body('user_present').optional().isBoolean(),
+    body('device').optional().isObject(),
+    body('device.ip_address').optional().isIP().withMessage('Invalid IP address'),
+    body('device.user_agent').optional().isString(),
+    body('user.phone_number').optional().isString(),
+    body('user.email_address').optional().isEmail().withMessage('Invalid email address'),
+    body('user.address').optional().isObject(),
+    body('user.address.street').optional().isString(),
+    body('user.address.city').optional().isString(),
+    body('user.address.region').optional().isString(),
+    body('user.address.postal_code').optional().isString(),
+    body('user.address.country').optional().isString().isLength({ min: 2, max: 2 }).withMessage('Country must be a two-letter code')
+  ]),
+  createTransferAuthorization
+);
+
+/**
+ * Create transfer endpoint
+ */
+protectedRouter.post(
+  '/transfer/create',
+  authMiddleware,
+  validate([
+    body('account_id')
+      .notEmpty()
+      .withMessage('Account ID is required'),
+    body('authorization_id')
+      .notEmpty()
+      .withMessage('Authorization ID is required'),
+    body('description')
+      .notEmpty()
+      .isLength({ max: 15 })
+      .withMessage('Description is required and must not exceed 15 characters'),
+    body('amount')
+      .optional()
+      .matches(/^\d+\.\d{2}$/)
+      .withMessage('Amount must be a decimal with two digits of precision'),
+    body('metadata')
+      .optional()
+      .isObject()
+      .custom((value) => {
+        const keys = Object.keys(value || {});
+        if (keys.length > 50) {
+          throw new Error('Maximum of 50 key/value pairs allowed in metadata');
+        }
+        for (const key of keys) {
+          if (key.length > 40) {
+            throw new Error('Maximum key length is 40 characters');
+          }
+          if (typeof value[key] !== 'string') {
+            throw new Error('Metadata values must be strings');
+          }
+          if (value[key].length > 500) {
+            throw new Error('Maximum value length is 500 characters');
+          }
+          if (!/^[\x00-\x7F]*$/.test(value[key])) {
+            throw new Error('Only ASCII characters are allowed in metadata values');
+          }
+        }
+        return true;
+      }),
+    body('test_clock_id')
+      .optional()
+      .isString(),
+    body('facilitator_fee')
+      .optional()
+      .matches(/^\d+\.\d{2}$/)
+      .withMessage('Facilitator fee must be a decimal with two digits of precision')
+  ]),
+  createTransfer
+);
+
+// Protected Routes (require authentication)
+protectedRouter.post('/link/token/create', authMiddleware, createLinkToken);
+protectedRouter.post('/item/public_token/exchange', authMiddleware, exchangePublicToken);
+protectedRouter.post('/asset_report/create', authMiddleware, createAssetReport);
+protectedRouter.post('/item/get',
+  authMiddleware,
+  validate([
+    body('access_token')
+      .notEmpty()
+      .withMessage('Access token is required')
+  ]),
+  getItem
+);
+
+export { publicRouter, protectedRouter };
 

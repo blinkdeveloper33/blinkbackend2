@@ -8,7 +8,7 @@ import config from './config';
 
 // Import Routes
 import { publicUserRoutes, protectedUserRoutes } from './routes/userRoutes';
-import plaidRoutes from './routes/plaidRoutes';
+import { publicRouter as publicPlaidRoutes, protectedRouter as protectedPlaidRoutes } from './routes/plaidRoutes';
 import blinkAdvanceRoutes from './routes/blinkAdvanceRoutes';
 import cashFlowRoutes from './routes/cashFlowRoutes';
 import blinkAdvanceDisbursementRoutes from './routes/blinkAdvanceDisbursementRoutes';
@@ -62,7 +62,7 @@ app.use(limiter);
 
 // Public Routes
 app.use('/api/users', publicUserRoutes);
-app.post('/api/plaid/webhook', plaidRoutes);
+app.use('/api/plaid', publicPlaidRoutes);
 
 // Root Endpoint (public)
 app.get('/', (req: Request, res: Response) => {
@@ -79,7 +79,7 @@ app.get('/api/health', (req: Request, res: Response) => {
 
 // Protected Routes
 app.use('/api/users', authMiddleware, protectedUserRoutes);
-app.use('/api/plaid', authMiddleware, plaidRoutes);
+app.use('/api/plaid', authMiddleware, protectedPlaidRoutes);
 app.use('/api/cash-flow', authMiddleware, cashFlowRoutes);
 app.use('/api/blink-advances', authMiddleware, blinkAdvanceRoutes);
 app.use('/api/blink-advances', authMiddleware, blinkAdvanceDisbursementRoutes);

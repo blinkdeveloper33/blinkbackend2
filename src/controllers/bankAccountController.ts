@@ -11,6 +11,7 @@ export const getBankAccountDetails = async (req: AuthenticatedRequest, res: Resp
   try {
     logger.debug('Received request for bank account details');
     const userId = req.user?.id;
+    logger.debug('User ID from request:', userId);
 
     if (!userId) {
       logger.debug('No user ID found in request');
@@ -41,8 +42,20 @@ export const getBankAccountDetails = async (req: AuthenticatedRequest, res: Resp
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
+    logger.debug('Supabase query result:', { bankAccounts, error });
+
     if (error) {
+      logger.error('Supabase error:', error);
       throw new Error('Error fetching bank accounts: ' + error.message);
+    }
+
+    if (!bankAccounts || bankAccounts.length === 0) {
+      logger.debug('No bank accounts found for user');
+      res.status(404).json({
+        success: false,
+        error: 'No bank accounts found for this user'
+      });
+      return;
     }
 
     // Transform the data to format balances and add additional information

@@ -9,10 +9,9 @@ import config from './config';
 // Import Routes
 import { publicUserRoutes, protectedUserRoutes } from './routes/userRoutes';
 import { publicRouter as publicPlaidRoutes, protectedRouter as protectedPlaidRoutes } from './routes/plaidRoutes';
-import blinkAdvanceRoutes from './routes/blinkAdvanceRoutes';
 import cashFlowRoutes from './routes/cashFlowRoutes';
-import blinkAdvanceDisbursementRoutes from './routes/blinkAdvanceDisbursementRoutes';
 import bankAccountRoutes from './routes/bankAccountRoutes';
+import blinkAdvanceRoutes from './routes/blinkAdvanceRoutes';
 
 // Import Logger
 import logger from './services/logger';
@@ -98,7 +97,6 @@ app.use('/api/users', authMiddleware, protectedUserRoutes);
 app.use('/api/plaid', authMiddleware, protectedPlaidRoutes);
 app.use('/api/cash-flow', authMiddleware, cashFlowRoutes);
 app.use('/api/blink-advances', authMiddleware, blinkAdvanceRoutes);
-app.use('/api/blink-advances', authMiddleware, blinkAdvanceDisbursementRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {

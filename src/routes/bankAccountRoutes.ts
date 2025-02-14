@@ -1,7 +1,7 @@
 import express, { Router } from 'express';
 import { param, ValidationChain, validationResult } from 'express-validator';
 import { getBankAccountDetails } from '../controllers/bankAccountController';
-import authMiddleware from '../middleware/authMiddleware';
+import authMiddleware, { AuthenticatedRequest } from '../middleware/authMiddleware';
 import logger from '../services/logger';
 
 const router: Router = express.Router();
@@ -37,6 +37,12 @@ router.use((req, res, next) => {
  */
 router.get(
   '/details',
+  (req: AuthenticatedRequest, res, next) => {
+    logger.debug('Bank Account Details route hit with user:', req.user);
+    logger.debug('Request path:', req.path);
+    logger.debug('Request method:', req.method);
+    next();
+  },
   getBankAccountDetails
 );
 

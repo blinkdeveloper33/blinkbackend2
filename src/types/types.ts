@@ -24,6 +24,7 @@ export interface User {
   email_verified: boolean; // Indicates if the user's email is verified
   cursor?: string; // For transactions sync per user (if needed)
   created_at?: string;
+  fcm_token?: string; // Firebase Cloud Messaging token for notifications
 }
 
 /**
@@ -87,34 +88,6 @@ export interface RegistrationSession {
   expires_at: string; // ISO string
   is_verified: boolean;
   created_at: string;
-}
-
-/**
- * BlinkAdvance Interface
- */
-export interface BlinkAdvance {
-  id: string;
-  user_id: string;
-  bank_account_id: string;
-  amount: number;
-  transfer_speed: 'instant' | 'standard';
-  fee_amount: number;
-  total_repayment_amount: number;
-  repayment_date: string;
-  repayment_term_days: 7 | 15;
-  fee_discount_applied: boolean;
-  discount_percentage: number | null;
-  status: 'pending' | 'processing' | 'active' | 'completed' | 'overdue' | 'cancelled';
-  processed_at: string | null;
-  completed_at: string | null;
-  created_at: string;
-  updated_at: string;
-  original_fee_amount: number;
-  funds_disbursed: boolean;
-  disbursement_date: string | null;
-  repayment_received: boolean;
-  repayment_received_date: string | null;
-  metadata: Record<string, any> | null;
 }
 
 /**
@@ -192,11 +165,6 @@ export interface Database {
           expires_at: string;
           created_at: string;
         }>;
-      };
-      blink_advances: { // Newly added BlinkAdvance table
-        Row: BlinkAdvance;
-        Insert: Partial<BlinkAdvance>;
-        Update: Partial<BlinkAdvance>;
       };
       // Define other tables here
     };

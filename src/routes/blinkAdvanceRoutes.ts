@@ -1,15 +1,6 @@
-// src/routes/blinkAdvanceRoutes.ts
-
-import express, { Request, Response, NextFunction, Router } from 'express';
-import { body, param, ValidationChain, validationResult } from 'express-validator';
-import {
-  createBlinkAdvance,
-  getBlinkAdvances,
-  getBlinkAdvanceById,
-  updateBlinkAdvanceStatus,
-  checkActiveAdvance,
-  getBlinkAdvanceApprovalStatus
-} from '../controllers/blinkAdvanceController';
+import express, { Router } from 'express';
+import { body, ValidationChain, validationResult } from 'express-validator';
+import { createBlinkAdvance } from '../controllers/blinkAdvanceController';
 import authMiddleware from '../middleware/authMiddleware';
 
 const router: Router = express.Router();
@@ -18,7 +9,7 @@ const router: Router = express.Router();
  * Custom validation middleware
  */
 const validate = (validations: ValidationChain[]) => {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     await Promise.all(validations.map(validation => validation.run(req)));
 
     const errors = validationResult(req);
@@ -34,99 +25,34 @@ const validate = (validations: ValidationChain[]) => {
 };
 
 /**
- * Get Blink Advance Approval Status
- * GET /api/blink-advances/approval-status
- * Returns whether the user is approved for Blink Advances
- */
-router.get(
-  '/approval-status',
-  authMiddleware,
-  getBlinkAdvanceApprovalStatus
-);
-
-/**
- * Check Active Advance
- * GET /api/blink-advances/active
- */
-router.get(
-  '/active',
-  authMiddleware,
-  checkActiveAdvance
-);
-
-/**
  * Create BlinkAdvance Endpoint
  * POST /api/blink-advances
  */
 router.post(
   '/',
   authMiddleware,
+  (req, res, next) => {
+    // Set fixed amount before validation
+    req.body.amount = 200.00;
+    next();
+  },
   validate([
     body('bankAccountId')
       .isString()
       .notEmpty()
-      .withMessage('Bank Account ID is required.'),
+      .withMessage('Bank account ID is required'),
     body('transferSpeed')
       .isIn(['instant', 'standard'])
-      .withMessage("Transfer speed must be either 'instant' or 'standard'."),
+      .withMessage("Transfer speed must be either 'instant' or 'standard'"),
     body('repaymentTermDays')
       .isIn([7, 15])
-      .withMessage('Repayment term must be either 7 or 15 days.'),
+      .withMessage('Repayment term must be either 7 or 15 days'),
     body('amount')
-      .isNumeric()
-      .custom((value) => value > 0 && value <= 1000)
-      .withMessage('Amount must be between 0 and 1000.'),
+      .optional()
+      .isFloat({ min: 0, max: 1000 })
+      .withMessage('Amount must be between 0 and 1000.')
   ]),
   createBlinkAdvance
 );
 
-/**
- * Get All BlinkAdvances for User
- * GET /api/blink-advances
- */
-router.get(
-  '/',
-  authMiddleware,
-  getBlinkAdvances
-);
-
-/**
- * Get Single BlinkAdvance by ID
- * GET /api/blink-advances/:id
- */
-router.get(
-  '/:id',
-  authMiddleware,
-  validate([
-    param('id')
-      .isUUID()
-      .withMessage('BlinkAdvance ID must be a valid UUID.'),
-  ]),
-  getBlinkAdvanceById
-);
-
-/**
- * Update BlinkAdvance Status
- * PATCH /api/blink-advances/:id/status
- */
-router.patch(
-  '/:id/status',
-  authMiddleware,
-  validate([
-    param('id')
-      .isUUID()
-      .withMessage('BlinkAdvance ID must be a valid UUID.'),
-    body('status')
-      .isIn(['approved', 'disbursed', 'repaid', 'defaulted', 'cancelled'])
-      .withMessage("Status must be one of: 'approved', 'disbursed', 'repaid', 'defaulted', 'cancelled'."),
-    body('reference')
-      .optional()
-      .isString()
-      .notEmpty()
-      .withMessage('Reference must be a non-empty string if provided.'),
-  ]),
-  updateBlinkAdvanceStatus
-);
-
-export default router;
-
+export default router; 

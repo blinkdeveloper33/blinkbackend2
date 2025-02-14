@@ -36,40 +36,6 @@ class NotificationService {
         }
     }
 
-    public async sendAdvanceApprovalNotification(userId: string): Promise<void> {
-        try {
-            // Get user's FCM token
-            const { data: user, error } = await supabase
-                .from('users')
-                .select('fcm_token')
-                .eq('id', userId)
-                .single();
-
-            if (error || !user?.fcm_token) {
-                logger.error('Error fetching user FCM token:', error);
-                return;
-            }
-
-            const message: admin.messaging.Message = {
-                notification: {
-                    title: 'Advance Approved! 🎉',
-                    body: 'Your Blink Advance request has been approved. You can now proceed with the advance.',
-                },
-                data: {
-                    type: 'advance_approval',
-                    userId,
-                },
-                token: user.fcm_token,
-            };
-
-            const response = await admin.messaging().send(message);
-            logger.info(`Successfully sent notification to user ${userId}:`, response);
-        } catch (error) {
-            logger.error('Error sending advance approval notification:', error);
-            // Don't throw the error as this is not critical for the main flow
-        }
-    }
-
     public async sendNotification(
         token: string,
         title: string,
@@ -96,50 +62,6 @@ class NotificationService {
         } catch (error) {
             logger.error('Error sending notification:', error);
             throw error;
-        }
-    }
-
-    public async sendAdvanceRequestedNotification(
-        userEmail: string,
-        advanceDetails: {
-            amount: number;
-            repaymentDate: string;
-            totalRepaymentAmount: number;
-        }
-    ): Promise<void> {
-        try {
-            // Get user's FCM token
-            const { data: user, error } = await supabase
-                .from('users')
-                .select('fcm_token')
-                .eq('email', userEmail)
-                .single();
-
-            if (error || !user?.fcm_token) {
-                logger.error('Error fetching user FCM token:', error);
-                return;
-            }
-
-            const formattedRepaymentDate = new Date(advanceDetails.repaymentDate).toLocaleDateString();
-            const message: admin.messaging.Message = {
-                notification: {
-                    title: 'Blink Advance Request Received 💫',
-                    body: `Your request for $${advanceDetails.amount.toFixed(2)} has been received. Total repayment of $${advanceDetails.totalRepaymentAmount.toFixed(2)} is due by ${formattedRepaymentDate}.`,
-                },
-                data: {
-                    type: 'advance_requested',
-                    amount: advanceDetails.amount.toString(),
-                    repaymentDate: advanceDetails.repaymentDate,
-                    totalRepaymentAmount: advanceDetails.totalRepaymentAmount.toString(),
-                },
-                token: user.fcm_token,
-            };
-
-            const response = await admin.messaging().send(message);
-            logger.info(`Successfully sent advance request notification to user ${userEmail}:`, response);
-        } catch (error) {
-            logger.error('Error sending advance request notification:', error);
-            // Don't throw the error as this is not critical for the main flow
         }
     }
 }

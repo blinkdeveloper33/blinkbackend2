@@ -7,7 +7,6 @@ interface CreateBlinkAdvanceRequest {
   bankAccountId: string;
   transferSpeed: 'instant' | 'standard';
   repaymentTermDays: 7 | 15;
-  amount?: number; // Optional since we'll set it
 }
 
 /**
@@ -26,9 +25,15 @@ export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Respons
     const userId = req.user.id;
     const { bankAccountId, transferSpeed, repaymentTermDays } = req.body as CreateBlinkAdvanceRequest;
 
+    logger.info('Creating blink advance with data:', {
+      userId,
+      bankAccountId,
+      transferSpeed,
+      repaymentTermDays
+    });
+
     // Fixed amount - always $200
     const FIXED_AMOUNT = 200.00;
-    req.body.amount = FIXED_AMOUNT; // Set the amount in the request body for validation
 
     // Calculate fees based on transfer speed
     const originalFeeAmount = transferSpeed === 'instant' ? 25.00 : 20.00;
@@ -45,6 +50,14 @@ export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Respons
 
     // Calculate total repayment amount
     const totalRepaymentAmount = Number((FIXED_AMOUNT + feeAmount).toFixed(2));
+
+    logger.info('Calculated values:', {
+      originalFeeAmount,
+      discountPercentage,
+      feeAmount,
+      totalRepaymentAmount,
+      repaymentDate
+    });
 
     // Check if user has any active advances
     const { data: activeAdvances, error: activeError } = await supabase
@@ -67,6 +80,8 @@ export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Respons
       return;
     }
 
+    logger.info('No active advances found');
+
     // Check if the bank account exists and belongs to the user
     const { data: bankAccount, error: bankError } = await supabase
       .from('bank_accounts')
@@ -75,13 +90,52 @@ export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Respons
       .eq('user_id', userId)
       .single();
 
-    if (bankError || !bankAccount) {
+    if (bankError) {
+      logger.error('Bank account check error:', bankError);
+      res.status(400).json({
+        success: false,
+        error: 'Error checking bank account.',
+        details: bankError.message
+      });
+      return;
+    }
+
+    if (!bankAccount) {
       res.status(400).json({
         success: false,
         error: 'Bank account not found or does not belong to the user.'
       });
       return;
     }
+
+    logger.info('Bank account verified');
+
+    // Verify user exists in auth.users
+    const { data: authUser, error: authError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', userId)
+      .single();
+
+    if (authError) {
+      logger.error('Auth user check error:', authError);
+      res.status(400).json({
+        success: false,
+        error: 'Error checking user in auth system.',
+        details: authError.message
+      });
+      return;
+    }
+
+    if (!authUser) {
+      res.status(400).json({
+        success: false,
+        error: 'User not found in auth system.'
+      });
+      return;
+    }
+
+    logger.info('User verified in auth system');
 
     // Prepare the blink advance record
     const blinkAdvanceData = {
@@ -111,6 +165,8 @@ export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Respons
       }
     };
 
+    logger.info('Attempting to insert blink advance:', blinkAdvanceData);
+
     // Create the blink advance
     const { data: newAdvance, error: insertError } = await supabase
       .from('blink_advances')
@@ -119,9 +175,24 @@ export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Respons
       .single();
 
     if (insertError) {
-      logger.error('Insert Error:', insertError);
-      throw insertError;
+      logger.error('Insert Error:', {
+        error: insertError,
+        message: insertError.message,
+        details: insertError.details,
+        hint: insertError.hint,
+        code: insertError.code
+      });
+      res.status(400).json({
+        success: false,
+        error: 'Failed to create advance.',
+        details: insertError.message,
+        code: insertError.code,
+        hint: insertError.hint
+      });
+      return;
     }
+
+    logger.info('Successfully created blink advance:', newAdvance);
 
     // Send success response
     res.status(201).json({
@@ -131,7 +202,11 @@ export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Respons
     });
 
   } catch (error: any) {
-    logger.error('Create BlinkAdvance Error:', error);
+    logger.error('Create BlinkAdvance Error:', {
+      error,
+      message: error.message,
+      stack: error.stack
+    });
     res.status(500).json({
       success: false,
       error: 'Failed to create BlinkAdvance request.',

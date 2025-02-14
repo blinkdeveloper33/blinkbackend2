@@ -12,6 +12,7 @@ import { publicRouter as publicPlaidRoutes, protectedRouter as protectedPlaidRou
 import blinkAdvanceRoutes from './routes/blinkAdvanceRoutes';
 import cashFlowRoutes from './routes/cashFlowRoutes';
 import blinkAdvanceDisbursementRoutes from './routes/blinkAdvanceDisbursementRoutes';
+import bankAccountRoutes from './routes/bankAccountRoutes';
 
 // Import Logger
 import logger from './services/logger';
@@ -22,7 +23,19 @@ import { scheduleCleanupExpiredSessions, scheduleBalanceSync } from './services/
 // Import authMiddleware
 import authMiddleware from './middleware/authMiddleware';
 
+// Import notification service
+import { notificationService } from './services/notificationService';
+
 const app: Application = express();
+
+// Initialize Firebase Admin SDK for notifications
+try {
+  notificationService.initialize();
+  logger.info('Firebase Admin SDK initialized successfully');
+} catch (error) {
+  logger.error('Failed to initialize Firebase Admin SDK:', error);
+  // Continue running the app even if notifications fail to initialize
+}
 
 // Debug logging middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -76,6 +89,9 @@ app.get('/', (req: Request, res: Response) => {
 app.get('/api/health', (req: Request, res: Response) => {
   res.status(200).json({ success: true, message: 'Server is healthy' });
 });
+
+// Bank Account Routes (Protected)
+app.use('/api/bank-accounts', authMiddleware, bankAccountRoutes);
 
 // Protected Routes
 app.use('/api/users', authMiddleware, protectedUserRoutes);

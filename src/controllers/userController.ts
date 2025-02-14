@@ -369,14 +369,11 @@ const getUserStatus = async (req: Request, res: Response): Promise<void> => {
 /**
  * Retrieves all bank account IDs for the authenticated user.
  */
-const getUserBankAccounts = async (req: Request, res: Response): Promise<void> => {
-  const authReq = req as AuthenticatedRequest;
-  const user = authReq.user;
-
-  if (!user) {
+const getUserBankAccounts = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if (!req.user) {
     res.status(401).json({
       success: false,
-      error: 'Unauthorized: User information not found.',
+      error: 'Unauthorized: User not found.',
     });
     return;
   }
@@ -386,7 +383,7 @@ const getUserBankAccounts = async (req: Request, res: Response): Promise<void> =
     const { data: bankAccounts, error } = await supabase
       .from('bank_accounts')
       .select('id, account_name, account_type, currency')
-      .eq('user_id', user.id);
+      .eq('user_id', req.user.id);
 
     if (error) {
       throw new Error('Error fetching bank accounts: ' + error.message);
@@ -400,11 +397,8 @@ const getUserBankAccounts = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    // Cast the data as BankAccountSummary[]
-    const bankAccountsSummary = bankAccounts as BankAccountSummary[];
-
     // Format the response to include only necessary fields
-    const formattedAccounts = bankAccountsSummary.map((account) => ({
+    const formattedAccounts = bankAccounts.map((account) => ({
       bankAccountId: account.id,
       accountName: account.account_name,
       accountType: account.account_type,
@@ -416,7 +410,7 @@ const getUserBankAccounts = async (req: Request, res: Response): Promise<void> =
       bankAccounts: formattedAccounts,
     });
   } catch (error: any) {
-    logger.error('Get User Bank Accounts Error:', error.message);
+    logger.error('Get Bank Accounts Error:', error.message);
     res.status(500).json({
       success: false,
       error: 'Failed to retrieve bank accounts.',
@@ -912,6 +906,49 @@ const registerCompleteWithLogin = async (req: Request, res: Response): Promise<v
   }
 };
 
+/**
+ * Updates the user's FCM token for push notifications.
+ */
+const updateFcmToken = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { fcm_token } = req.body;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: 'User not authenticated'
+      });
+      return;
+    }
+
+    const { error } = await supabase
+      .from('users')
+      .update({
+        fcm_token,
+        fcm_token_updated_at: new Date().toISOString()
+      })
+      .eq('id', userId);
+
+    if (error) {
+      logger.error('Error updating FCM token:', error);
+      throw new Error('Failed to update FCM token');
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'FCM token updated successfully'
+    });
+  } catch (error: any) {
+    logger.error('Update FCM Token Error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: error.message
+    });
+  }
+};
+
 export {
   registerInitial,
   verifyOTP,
@@ -924,6 +961,7 @@ export {
   getUserAccountData,
   updateProfilePicture,
   getProfilePictureUrl,
-  registerCompleteWithLogin
+  registerCompleteWithLogin,
+  updateFcmToken
 };
 

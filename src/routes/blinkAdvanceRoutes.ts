@@ -57,36 +57,25 @@ router.get(
 /**
  * Create BlinkAdvance Endpoint
  * POST /api/blink-advances
- * Note: 
- * - Amount is fixed at $200
- * - Base fee depends on transfer speed:
- *   - Instant: $24.99
- *   - Standard: $19.99
- * - 10% discount on fee if repayment is within 7 days
  */
 router.post(
   '/',
   authMiddleware,
   validate([
-    body('transferSpeed')
-      .isIn(['Instant', 'Standard'])
-      .withMessage("Transfer speed must be either 'Instant' or 'Standard'."),
-    body('repaymentDate')
-      .isISO8601()
-      .withMessage('Repayment date must be a valid ISO 8601 date.')
-      .custom((repaymentDate) => {
-        const repayDate = new Date(repaymentDate);
-        const today = new Date();
-        const maxRepayDate = new Date(today.getTime() + 31 * 24 * 60 * 60 * 1000);
-        if (repayDate > maxRepayDate) {
-          throw new Error('Repayment date must be within 31 days from today.');
-        }
-        return true;
-      }),
     body('bankAccountId')
       .isString()
       .notEmpty()
       .withMessage('Bank Account ID is required.'),
+    body('transferSpeed')
+      .isIn(['instant', 'standard'])
+      .withMessage("Transfer speed must be either 'instant' or 'standard'."),
+    body('repaymentTermDays')
+      .isIn([7, 15])
+      .withMessage('Repayment term must be either 7 or 15 days.'),
+    body('amount')
+      .isNumeric()
+      .custom((value) => value > 0 && value <= 1000)
+      .withMessage('Amount must be between 0 and 1000.'),
   ]),
   createBlinkAdvance
 );

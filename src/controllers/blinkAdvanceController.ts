@@ -5,12 +5,13 @@ import supabase from '../services/supabaseService';
 import logger from '../services/logger';
 import { BlinkAdvance } from '../types/types';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
+import { notificationService } from '../services/notificationService';
 
 /**
  * Creates a new BlinkAdvance request.
  */
 export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { transferSpeed, repaymentDate, bankAccountId } = req.body;
+  const { transferSpeed, repaymentTermDays, amount, bankAccountId } = req.body;
   
   if (!req.user) {
     res.status(401).json({
@@ -23,39 +24,40 @@ export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Respons
   const userId = req.user.id;
 
   try {
-    // Fixed amount of $200
-    const amount = 200;
-
-    // Validate transferSpeed
-    if (!['Instant', 'Standard'].includes(transferSpeed)) {
-      res.status(400).json({
-        success: false,
-        error: "Transfer speed must be either 'Instant' or 'Standard'.",
-      });
-      return;
-    }
-
-    // Validate repaymentDate is within 31 days from now
-    const today = new Date();
-    const repayDate = new Date(repaymentDate);
-    const maxRepayDate = new Date(today.getTime() + 31 * 24 * 60 * 60 * 1000);
-
-    if (repayDate > maxRepayDate) {
-      res.status(400).json({
-        success: false,
-        error: 'Repayment date must be within 31 days from today.',
-      });
-      return;
-    }
-
-    // Calculate base fee based on transfer speed
-    const baseFee = transferSpeed === 'Instant' ? 24.99 : 19.99;
+    // Calculate fee based on transfer speed
+    const baseFeePercentage = transferSpeed === 'instant' ? 0.15 : 0.10; // 15% for instant, 10% for standard
+    const originalFeeAmount = amount * baseFeePercentage;
     
-    // Calculate discount based on repayment date
-    // If repayment is within 7 days, apply 10% discount
-    const daysUntilRepayment = Math.ceil((repayDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-    const discountApplied = daysUntilRepayment <= 7 ? 0.10 : 0;
-    const finalFee = baseFee * (1 - discountApplied);
+    // Apply discount if repayment term is 7 days
+    const discountPercentage = repaymentTermDays === 7 ? 0.10 : 0; // 10% discount for 7-day term
+    const feeAmount = originalFeeAmount * (1 - discountPercentage);
+    
+    // Calculate total repayment amount
+    const totalRepaymentAmount = amount + feeAmount;
+
+    // Calculate repayment date based on term
+    const repaymentDate = new Date();
+    repaymentDate.setDate(repaymentDate.getDate() + repaymentTermDays);
+
+    // Check if user has any active advances
+    const { data: activeAdvances, error: activeError } = await supabase
+      .from('blink_advances')
+      .select('*')
+      .eq('user_id', userId)
+      .in('status', ['pending', 'processing', 'active'])
+      .limit(1);
+
+    if (activeError) {
+      throw activeError;
+    }
+
+    if (activeAdvances && activeAdvances.length > 0) {
+      res.status(400).json({
+        success: false,
+        error: 'You already have an active advance. Please complete it before requesting a new one.',
+      });
+      return;
+    }
 
     // Check if the user has the specified bank account
     const { data: bankAccount, error: bankError } = await supabase
@@ -73,26 +75,6 @@ export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Respons
       return;
     }
 
-    // Check if user has any active advances
-    const { data: activeAdvances, error: activeError } = await supabase
-      .from('blink_advances')
-      .select('*')
-      .eq('user_id', userId)
-      .in('status', ['pending', 'approved', 'disbursed'])
-      .limit(1);
-
-    if (activeError) {
-      throw activeError;
-    }
-
-    if (activeAdvances && activeAdvances.length > 0) {
-      res.status(400).json({
-        success: false,
-        error: 'You already have an active advance. Please repay it before requesting a new one.',
-      });
-      return;
-    }
-
     // Insert the new BlinkAdvance record
     const { data: newAdvance, error: insertError } = await supabase
       .from('blink_advances')
@@ -100,15 +82,23 @@ export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Respons
         {
           user_id: userId,
           bank_account_id: bankAccountId,
-          amount: amount,
+          amount,
           transfer_speed: transferSpeed,
-          base_fee: baseFee,
-          discount_applied: discountApplied,
-          final_fee: finalFee,
-          repayment_date: repaymentDate,
+          fee_amount: feeAmount,
+          total_repayment_amount: totalRepaymentAmount,
+          repayment_date: repaymentDate.toISOString(),
+          repayment_term_days: repaymentTermDays,
+          fee_discount_applied: discountPercentage > 0,
+          discount_percentage: discountPercentage > 0 ? discountPercentage * 100 : null,
           status: 'pending',
-          is_early_repayment: daysUntilRepayment <= 7
-        },
+          original_fee_amount: originalFeeAmount,
+          funds_disbursed: false,
+          repayment_received: false,
+          metadata: {
+            request_ip: req.ip,
+            user_agent: req.headers['user-agent']
+          }
+        }
       ])
       .select('*')
       .single();
@@ -117,11 +107,25 @@ export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Respons
       throw insertError;
     }
 
+    // Send success response
     res.status(201).json({
       success: true,
       message: 'BlinkAdvance request created successfully.',
       advance: newAdvance,
     });
+
+    // Notify user via email/notification service
+    try {
+      await notificationService.sendAdvanceRequestedNotification(req.user.email, {
+        amount,
+        repaymentDate: repaymentDate.toISOString(),
+        totalRepaymentAmount
+      });
+    } catch (notificationError) {
+      logger.error('Failed to send advance request notification:', notificationError);
+      // Don't fail the request if notification fails
+    }
+
   } catch (error) {
     logger.error('Create BlinkAdvance Error:', error);
     res.status(500).json({
@@ -250,62 +254,38 @@ export const updateBlinkAdvanceStatus = async (req: AuthenticatedRequest, res: R
       .from('blink_advances')
       .select('*')
       .eq('id', id)
-      .eq('user_id', userId)
       .single();
 
-    if (fetchError || !currentAdvance) {
-      res.status(404).json({
-        success: false,
-        error: 'BlinkAdvance record not found.',
-      });
-      return;
+    if (fetchError) {
+      throw fetchError;
     }
 
-    // Define valid status transitions
-    const validTransitions: { [key: string]: string[] } = {
-      pending: ['approved', 'cancelled'],
-      approved: ['disbursed', 'cancelled'],
-      disbursed: ['repaid', 'defaulted'],
-      repaid: [],
-      defaulted: [],
-      cancelled: [],
-    };
-
-    const allowedTransitions = validTransitions[currentAdvance.status] || [];
-    if (!allowedTransitions.includes(status)) {
-      res.status(400).json({
-        success: false,
-        error: `Cannot transition from ${currentAdvance.status} to ${status}.`,
-      });
-      return;
-    }
-
-    // Prepare update data
-    const updateData: any = { status };
-    
-    // Add timestamp based on status
-    if (status === 'approved') {
-      updateData.approved_at = new Date().toISOString();
-      updateData.processing_reference = reference;
-    } else if (status === 'disbursed') {
-      updateData.disbursed_at = new Date().toISOString();
-      updateData.disbursement_reference = reference;
-    } else if (status === 'repaid') {
-      updateData.repaid_at = new Date().toISOString();
-      updateData.repayment_reference = reference;
-    }
-
-    // Update the advance
+    // Update the advance status
     const { data: updatedAdvance, error: updateError } = await supabase
       .from('blink_advances')
-      .update(updateData)
+      .update({
+        status,
+        reference,
+        ...(status === 'approved' && { approved_at: new Date().toISOString() }),
+        ...(status === 'disbursed' && { disbursed_at: new Date().toISOString() }),
+        ...(status === 'repaid' && { repaid_at: new Date().toISOString() }),
+      })
       .eq('id', id)
-      .eq('user_id', userId)
-      .select('*')
+      .select()
       .single();
 
     if (updateError) {
       throw updateError;
+    }
+
+    // If the status was changed to approved, send a notification
+    if (status === 'approved' && currentAdvance.status !== 'approved') {
+      try {
+        await notificationService.sendAdvanceApprovalNotification(currentAdvance.user_id);
+      } catch (notificationError) {
+        // Log the error but don't fail the request
+        logger.error('Failed to send approval notification:', notificationError);
+      }
     }
 
     res.status(200).json({

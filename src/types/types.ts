@@ -97,22 +97,24 @@ export interface BlinkAdvance {
   user_id: string;
   bank_account_id: string;
   amount: number;
-  transfer_speed: 'Instant' | 'Standard';
-  base_fee: number;
-  discount_applied: number;
-  final_fee: number;
-  requested_at: string;
-  approved_at?: string | null;
-  disbursed_at?: string | null;
+  transfer_speed: 'instant' | 'standard';
+  fee_amount: number;
+  total_repayment_amount: number;
   repayment_date: string;
-  repaid_at?: string | null;
-  status: 'pending' | 'approved' | 'disbursed' | 'repaid' | 'defaulted' | 'cancelled';
-  processing_reference?: string | null;
-  disbursement_reference?: string | null;
-  repayment_reference?: string | null;
-  is_early_repayment: boolean;
+  repayment_term_days: 7 | 15;
+  fee_discount_applied: boolean;
+  discount_percentage: number | null;
+  status: 'pending' | 'processing' | 'active' | 'completed' | 'overdue' | 'cancelled';
+  processed_at: string | null;
+  completed_at: string | null;
   created_at: string;
   updated_at: string;
+  original_fee_amount: number;
+  funds_disbursed: boolean;
+  disbursement_date: string | null;
+  repayment_received: boolean;
+  repayment_received_date: string | null;
+  metadata: Record<string, any> | null;
 }
 
 /**

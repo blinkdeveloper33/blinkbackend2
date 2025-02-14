@@ -15,9 +15,12 @@ import {
   updateProfilePicture,
   getProfilePictureUrl,
   registerCompleteWithLogin,
+  updateFcmToken,
 } from '../controllers/userController';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import logger from '../services/logger';
+import { param } from 'express-validator';
+import { getBankAccountDetails } from '../controllers/bankAccountController';
 
 const publicRouter: Router = express.Router();
 const protectedRouter: Router = express.Router();
@@ -84,6 +87,14 @@ const loginValidation: ValidationChain[] = [
   body('password')
     .notEmpty()
     .withMessage('Password is required'),
+];
+
+const fcmTokenValidation: ValidationChain[] = [
+  body('fcm_token')
+    .notEmpty()
+    .withMessage('FCM token is required')
+    .isString()
+    .withMessage('FCM token must be a string')
 ];
 
 /**
@@ -194,6 +205,41 @@ protectedRouter.post(
       .withMessage('File must be a base64 string')
   ]),
   updateProfilePicture
+);
+
+// Update FCM token
+protectedRouter.post(
+  '/fcm-token',
+  validate(fcmTokenValidation),
+  updateFcmToken
+);
+
+/**
+ * Get User's Bank Accounts
+ * GET /api/users/:userId/bank-accounts
+ */
+protectedRouter.get(
+  '/:userId/bank-accounts',
+  validate([
+    param('userId')
+      .isUUID()
+      .withMessage('User ID must be a valid UUID.'),
+  ]),
+  getUserBankAccounts
+);
+
+/**
+ * Get User's Bank Account Details
+ * GET /api/users/:userId/bank-accounts/details
+ */
+protectedRouter.get(
+  '/:userId/bank-accounts/details',
+  validate([
+    param('userId')
+      .isUUID()
+      .withMessage('User ID must be a valid UUID.'),
+  ]),
+  getBankAccountDetails
 );
 
 /**

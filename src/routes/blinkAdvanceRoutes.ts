@@ -1,6 +1,6 @@
 import express, { Router } from 'express';
 import { body, ValidationChain, validationResult } from 'express-validator';
-import { createBlinkAdvance } from '../controllers/blinkAdvanceController';
+import { createBlinkAdvance, getBlinkAdvanceApprovalStatus, getActiveBlinkAdvance } from '../controllers/blinkAdvanceController';
 import authMiddleware from '../middleware/authMiddleware';
 
 const router: Router = express.Router();
@@ -54,5 +54,17 @@ router.post(
   ]),
   createBlinkAdvance
 );
+
+/**
+ * Get Approval Status Endpoint
+ * GET /api/blink-advances/approval-status
+ */
+router.get('/approval-status', authMiddleware, getBlinkAdvanceApprovalStatus);
+
+/**
+ * Get Active Advance Endpoint
+ * GET /api/blink-advances/active
+ */
+router.get('/active', authMiddleware, getActiveBlinkAdvance);
 
 export default router; 

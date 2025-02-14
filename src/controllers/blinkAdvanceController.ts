@@ -213,4 +213,135 @@ export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Respons
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
+};
+
+/**
+ * Gets the user's Blink Advance approval status
+ */
+export const getBlinkAdvanceApprovalStatus = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized: User not found.'
+      });
+      return;
+    }
+
+    const userId = req.user.id;
+
+    // Get the user's approval status
+    const { data: approvalStatus, error: approvalError } = await supabase
+      .from('blink_advance_approvals')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (approvalError) {
+      logger.error('Error checking approval status:', approvalError);
+      res.status(400).json({
+        success: false,
+        error: 'Error checking approval status',
+        details: approvalError.message
+      });
+      return;
+    }
+
+    // If no record exists, user is not approved
+    if (!approvalStatus) {
+      res.status(200).json({
+        success: true,
+        data: {
+          isApproved: false,
+          approvedAt: null
+        }
+      });
+      return;
+    }
+
+    // Return approval status
+    res.status(200).json({
+      success: true,
+      data: {
+        isApproved: approvalStatus.is_approved,
+        approvedAt: approvalStatus.approved_at
+      }
+    });
+
+  } catch (error: any) {
+    logger.error('Get Approval Status Error:', {
+      error,
+      message: error.message,
+      stack: error.stack
+    });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get approval status.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+/**
+ * Gets the user's active Blink Advance if any exists
+ */
+export const getActiveBlinkAdvance = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized: User not found.'
+      });
+      return;
+    }
+
+    const userId = req.user.id;
+
+    // Check for active advances
+    const { data: activeAdvance, error: activeError } = await supabase
+      .from('blink_advances')
+      .select('*')
+      .eq('user_id', userId)
+      .in('status', ['pending', 'processing', 'active'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (activeError) {
+      logger.error('Error checking active advances:', activeError);
+      res.status(400).json({
+        success: false,
+        error: 'Error checking active advances',
+        details: activeError.message
+      });
+      return;
+    }
+
+    // If no active advance exists
+    if (!activeAdvance) {
+      res.status(200).json({
+        success: true,
+        data: null
+      });
+      return;
+    }
+
+    // Return active advance details
+    res.status(200).json({
+      success: true,
+      data: activeAdvance
+    });
+
+  } catch (error: any) {
+    logger.error('Get Active Advance Error:', {
+      error,
+      message: error.message,
+      stack: error.stack
+    });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get active advance.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
 }; 

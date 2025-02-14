@@ -32,30 +32,6 @@ export const createBlinkAdvance = async (req: AuthenticatedRequest, res: Respons
       repaymentTermDays
     });
 
-    // Verify user exists in auth.users
-    const { data: authUser, error: authError } = await supabase
-      .auth.admin.getUserById(userId);
-
-    if (authError) {
-      logger.error('Auth user check error:', authError);
-      res.status(400).json({
-        success: false,
-        error: 'Error checking user in auth system.',
-        details: authError.message
-      });
-      return;
-    }
-
-    if (!authUser) {
-      res.status(400).json({
-        success: false,
-        error: 'User not found in auth system.'
-      });
-      return;
-    }
-
-    logger.info('User verified in auth system');
-
     // Fixed amount - always $200
     const FIXED_AMOUNT = 200.00;
 

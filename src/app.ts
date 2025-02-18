@@ -12,6 +12,7 @@ import { publicRouter as publicPlaidRoutes, protectedRouter as protectedPlaidRou
 import cashFlowRoutes from './routes/cashFlowRoutes';
 import bankAccountRoutes from './routes/bankAccountRoutes';
 import blinkAdvanceRoutes from './routes/blinkAdvanceRoutes';
+import assetReportRoutes from './routes/assetReportRoutes';
 
 // Import Logger
 import logger from './services/logger';
@@ -97,6 +98,9 @@ app.use('/api/users', authMiddleware, protectedUserRoutes);
 app.use('/api/plaid', authMiddleware, protectedPlaidRoutes);
 app.use('/api/cash-flow', authMiddleware, cashFlowRoutes);
 app.use('/api/blink-advances', authMiddleware, blinkAdvanceRoutes);
+
+// Add asset report routes (protected)
+app.use('/api/asset-report', authMiddleware, assetReportRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {

@@ -26,7 +26,8 @@ import {
   createTransferAuthorization,
   createTransfer,
   createAssetReport,
-  getItem
+  getItem,
+  getItemProducts
 } from '../controllers/plaidController';
 import authMiddleware from '../middleware/authMiddleware';
 import rateLimit from 'express-rate-limit';
@@ -409,6 +410,7 @@ protectedRouter.post('/item/get',
   ]),
   getItem
 );
+protectedRouter.post('/item/products', authMiddleware, getItemProducts);
 
 export { publicRouter, protectedRouter };
 

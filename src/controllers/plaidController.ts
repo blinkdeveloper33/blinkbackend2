@@ -2884,4 +2884,57 @@ async function getTransferCapabilities(access_token: string, account_id: string)
   }
 }
 
+export const getItemProducts = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { access_token } = req.body;
+
+    if (!access_token) {
+      res.status(400).json({
+        success: false,
+        error: 'Missing access token'
+      });
+      return;
+    }
+
+    const response = await plaidClient.itemGet({
+      access_token
+    });
+
+    const item = response.data.item;
+    const availableProducts = item.available_products || [];
+    const billedProducts = item.billed_products || [];
+    const allProducts = [...availableProducts, ...billedProducts];
+
+    logger.debug('Item products check:', {
+      itemId: item.item_id,
+      availableProducts,
+      billedProducts,
+      hasAssets: allProducts.includes(Products.Assets),
+      institution_id: item.institution_id
+    });
+
+    res.json({
+      success: true,
+      item_id: item.item_id,
+      available_products: availableProducts,
+      billed_products: billedProducts,
+      has_assets: allProducts.includes(Products.Assets),
+      institution_id: item.institution_id,
+      error: item.error
+    });
+
+  } catch (error: any) {
+    logger.error('Error checking item products:', {
+      error: error.message,
+      plaidError: error.response?.data
+    });
+    
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check item products',
+      details: error.response?.data || error.message
+    });
+  }
+};
+
 

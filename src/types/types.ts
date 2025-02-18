@@ -9,6 +9,7 @@ import {
   AccountSubtype, 
   TransactionsSyncRequest as PlaidTransactionsSyncRequest 
 } from 'plaid';
+import { Request } from 'express';
 
 /**
  * User Interface
@@ -331,4 +332,12 @@ export interface Transfer {
   }>;
   facilitator_fee?: string;
   network_trace_id: string | null;
+}
+
+export interface AuthenticatedRequest extends Request {
+  user?: {
+    id: string;
+    email: string;
+    [key: string]: any;
+  };
 }

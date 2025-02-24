@@ -27,10 +27,13 @@ import {
   createTransfer,
   createAssetReport,
   getItem,
-  getItemProducts
+  getItemProducts,
+  getBankAccountAccessToken,
+  getPlaidAccessToken
 } from '../controllers/plaidController';
 import authMiddleware from '../middleware/authMiddleware';
 import rateLimit from 'express-rate-limit';
+import { param } from 'express-validator';
 
 // Create separate routers for public and protected routes
 const publicRouter: Router = express.Router();
@@ -397,6 +400,19 @@ protectedRouter.post(
   createTransfer
 );
 
+/**
+ * Get access token for a bank account
+ */
+protectedRouter.post(
+  '/get-access-token',
+  validate([
+    body('bankAccountId')
+      .notEmpty()
+      .withMessage('Bank account ID is required')
+  ]),
+  getBankAccountAccessToken
+);
+
 // Protected Routes (require authentication)
 protectedRouter.post('/link/token/create', authMiddleware, createLinkToken);
 protectedRouter.post('/item/public_token/exchange', authMiddleware, exchangePublicToken);
@@ -411,6 +427,20 @@ protectedRouter.post('/item/get',
   getItem
 );
 protectedRouter.post('/item/products', authMiddleware, getItemProducts);
+
+/**
+ * Get Plaid access token for a specific bank account
+ */
+protectedRouter.get(
+  '/access-token/:bankAccountId',
+  authMiddleware,
+  validate([
+    param('bankAccountId')
+      .notEmpty()
+      .withMessage('Bank account ID is required')
+  ]),
+  getPlaidAccessToken
+);
 
 export { publicRouter, protectedRouter };
 

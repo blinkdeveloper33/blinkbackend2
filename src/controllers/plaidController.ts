@@ -2937,4 +2937,157 @@ export const getItemProducts = async (req: AuthenticatedRequest, res: Response):
   }
 };
 
+/**
+ * Get Plaid access token for a specific bank account
+ * GET /api/plaid/access-token/:bankAccountId
+ */
+export const getPlaidAccessToken = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { bankAccountId } = req.params;
+
+    logger.debug('Getting Plaid access token:', { userId, bankAccountId });
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized: User not found.'
+      });
+      return;
+    }
+
+    if (!bankAccountId) {
+      res.status(400).json({
+        success: false,
+        error: 'Bank account ID is required'
+      });
+      return;
+    }
+
+    // Fetch the bank account ensuring it belongs to the authenticated user
+    const { data: bankAccount, error: bankAccountError } = await supabase
+      .from('bank_accounts')
+      .select('plaid_access_token, account_name')
+      .eq('id', bankAccountId)
+      .eq('user_id', userId)
+      .single();
+
+    if (bankAccountError) {
+      logger.error('Error fetching bank account:', bankAccountError);
+      res.status(400).json({
+        success: false,
+        error: 'Error fetching bank account',
+        details: bankAccountError.message
+      });
+      return;
+    }
+
+    if (!bankAccount) {
+      res.status(404).json({
+        success: false,
+        error: 'Bank account not found or unauthorized access'
+      });
+      return;
+    }
+
+    // Verify the access token exists
+    if (!bankAccount.plaid_access_token) {
+      res.status(404).json({
+        success: false,
+        error: 'Plaid access token not found for this bank account'
+      });
+      return;
+    }
+
+    logger.debug('Successfully retrieved Plaid access token for bank account:', { 
+      bankAccountId,
+      accountName: bankAccount.account_name 
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        accessToken: bankAccount.plaid_access_token,
+        accountName: bankAccount.account_name
+      }
+    });
+
+  } catch (error: any) {
+    logger.error('Get Plaid Access Token Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get Plaid access token',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+/**
+ * Get Plaid access token for a bank account
+ * POST /api/plaid/get-access-token
+ */
+export const getBankAccountAccessToken = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { bankAccountId } = req.body;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized: User not found.'
+      });
+      return;
+    }
+
+    if (!bankAccountId) {
+      res.status(400).json({
+        success: false,
+        error: 'Bank account ID is required'
+      });
+      return;
+    }
+
+    // Fetch the bank account ensuring it belongs to the authenticated user
+    const { data: bankAccount, error: bankAccountError } = await supabase
+      .from('bank_accounts')
+      .select('plaid_access_token')
+      .eq('id', bankAccountId)
+      .eq('user_id', userId)
+      .single();
+
+    if (bankAccountError) {
+      logger.error('Error fetching bank account:', bankAccountError);
+      res.status(400).json({
+        success: false,
+        error: 'Error fetching bank account',
+        details: bankAccountError.message
+      });
+      return;
+    }
+
+    if (!bankAccount) {
+      res.status(404).json({
+        success: false,
+        error: 'Bank account not found or unauthorized access'
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        accessToken: bankAccount.plaid_access_token
+      }
+    });
+
+  } catch (error: any) {
+    logger.error('Get Bank Account Access Token Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get access token',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 
